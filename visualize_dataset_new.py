@@ -13,6 +13,7 @@ def create_corners(x_min, y_min, x_max, y_max):
 def plot_proposals_gt(gt, proposal, pc_feature):
     gt = gt.astype(np.int32)
     proposal = proposal.astype(np.int32)
+    pc_feature = pc_feature.permute(1,2,0)
 
     pc_feature = pc_feature.numpy()
     pc_feature = pc_feature[::-1, :, :-1]
