@@ -6,6 +6,9 @@ import matplotlib.patches as patches
 import os
 from tqdm import tqdm
 
+def create_corners(x_min, y_min, x_max, y_max):
+    corners = np.array([[x_min, y_min], [x_min, y_max], [x_max, y_max], [x_max, y_min]])
+    return corners
 
 def plot_proposals_gt(gt, proposal, pc_feature):
     gt = gt.astype(np.int32)
@@ -23,14 +26,14 @@ def plot_proposals_gt(gt, proposal, pc_feature):
     intensity[:, :, 2] = val
     intensity = intensity.astype(np.uint8)*255
 
-    for corners in gt:
-        plot_corners = corners
+    for box in gt:
+        plot_corners = create_corners(box[0], box[1], box[2], box[3])
         plot_corners[:, 1] = intensity.shape[0] - plot_corners[:, 1]
         plot_corners = plot_corners.astype(np.int32).reshape((-1, 1, 2))
         cv2.polylines(intensity, [plot_corners], True, (0, 0, 255), 2)
     
-    for corners in proposal:
-        plot_corners = corners
+    for box in proposal:
+        plot_corners = create_corners(box[0], box[1], box[2], box[3])
         plot_corners[:, 1] = intensity.shape[0] - plot_corners[:, 1]
         plot_corners = plot_corners.astype(np.int32).reshape((-1, 1, 2))
         cv2.polylines(intensity, [plot_corners], True, (0, 255, 0), 2)
