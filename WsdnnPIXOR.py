@@ -34,26 +34,29 @@ class WSDDNPIXOR(nn.Module):
                             nn.ReLU(),
                             nn.MaxPool2d((3, 3), (2, 2), (1, 1)))
 
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((40, 35))
         self.roi_pool = torchvision.ops.roi_pool
         self.classifier = nn.Sequential(
-                        nn.Linear(256*self.roi_size[0]*self.roi_size[1], 4096), 
+                        nn.Linear(256*self.roi_size[0]*self.roi_size[1], 2*4096), 
                         nn.ReLU(inplace=True), 
-                        nn.Linear(4096, 1024), 
+                        nn.Linear(2*4096, 2*1024), 
                         nn.ReLU(inplace=True))
 
         self.score_fc   = nn.Sequential(
-                            nn.Linear(1024, self.n_classes),
+                            nn.Linear(2*1024, self.n_classes),
                             nn.Softmax(dim=1))
 
         self.bbox_fc    = nn.Sequential(
-                            nn.Linear(1024, self.n_classes),
+                            nn.Linear(2*1024, self.n_classes),
                             nn.Softmax(dim=0))
 
     def forward(self, x, rois=None):
         out = self.backbone(x)
         conv_features = self.encoder(out)
+        conv_features = self.adaptive_pool(conv_features)
+        print(conv_features.shape)
         h, w = conv_features.shape[2], conv_features.shape[3]
-        spp_output = self.roi_pool(conv_features, [rois], self.roi_size, (h/x.shape[2], w/x.shape[3]))
+        spp_output = self.roi_pool(conv_features, [rois], self.roi_size, (h/x.shape[2]))
         spp_output = spp_output.reshape(spp_output.shape[0], -1)
         classifier_ouput = self.classifier(spp_output)
         class_scores = self.score_fc(classifier_ouput)
@@ -69,5 +72,6 @@ if __name__ == '__main__':
     x = torch.randn((1, 36, 800, 700)).cuda()
     model = WSDDNPIXOR()
     model = model.cuda()
-    out, conv_features = model(x)
-    print(out.shape, conv_features.shape)
+    rois = torch.randn((100, 4)).cuda()
+    out = model(x, rois)
+    print(out.shape)
