@@ -2,14 +2,17 @@ import numpy as np
 import math
 import cv2
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import os
 from tqdm import tqdm
 
 
 def plot_proposals_gt(gt, proposal):
-    image = np.zeros((800,700), dtype=np.uint8)
+    image = np.ones((800,700), dtype=np.uint8)
     gt = gt.astype(np.int32)
     proposal = proposal.astype(np.int32)
+    fig, ax = plt.subplots()
+    ax.imshow(image)
 
     # plotting gt boxes
     for i in range(gt.shape[0]):
@@ -17,7 +20,11 @@ def plot_proposals_gt(gt, proposal):
         y1 = gt[i, 1]
         x2 = gt[i, 2]
         y2 = gt[i, 3]
-        cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 1)
+        height = y2 - y1
+        width = x2 - x1
+        corner = (x1, y1)
+        rect = patches.Rectangle(corner, width, height, linewidth=1, edgecolor='r', facecolor='none')
+        ax.add_patch(rect)
 
     # plotting proposal boxes
     for i in range(proposal.shape[0]):
@@ -25,8 +32,17 @@ def plot_proposals_gt(gt, proposal):
         y1 = proposal[i, 1]
         x2 = proposal[i, 2]
         y2 = proposal[i, 3]
-        cv2.rectangle(image, (x1, y1), (x2, y2), (0, 0, 255), 1)
+        height = y2 - y1
+        width = x2 - x1
+        corner = (x1, y1)
+        rect = patches.Rectangle(corner, width, height, linewidth=1, edgecolor='b', facecolor='none')
+        ax.add_patch(rect)
     
-    img = plt.imread(image)
-    plt.imshow(img)
     plt.show()
+    
+
+
+if __name__ == "__main__":
+    gt = np.array([[0, 0, 100, 100], [100, 100, 200, 200], [200, 200, 300, 300]])
+    proposal = np.array([[0, 0, 50, 50], [100, 100, 100, 100], [200, 200, 400, 400]])
+    plot_proposals_gt(gt, proposal)
