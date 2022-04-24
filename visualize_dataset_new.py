@@ -6,6 +6,15 @@ import matplotlib.patches as patches
 import os
 from tqdm import tqdm
 
+def point_in_roi(self, point):
+    if (point[0] - self.geometry['W1']) < 0.01 or (self.geometry['W2'] - point[0]) < 0.01:
+        return False
+    if (point[1] - self.geometry['L1']) < 0.01 or (self.geometry['L2'] - point[1]) < 0.01:
+        return False
+    if (point[2] - self.geometry['H1']) < 0.01 or (self.geometry['H2'] - point[2]) < 0.01:
+        return False
+    return True
+
 def lidar_preprocess(self, scan):
     velo = scan
     velo_processed = np.zeros(self.geometry['input_shape'], dtype=np.float32)
