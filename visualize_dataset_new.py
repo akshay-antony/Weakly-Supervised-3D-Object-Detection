@@ -29,13 +29,13 @@ def plot_proposals_gt(gt, proposal, pc_feature):
 
     for box in gt:
         plot_corners = create_corners(box[0], box[1], box[2], box[3])
-        plot_corners[:, 1] = intensity.shape[0] - plot_corners[:, 1]
+        plot_corners[:, 0] = intensity.shape[0] - plot_corners[:, 0]
         plot_corners = plot_corners.astype(np.int32).reshape((-1, 1, 2))
         cv2.polylines(intensity, [plot_corners], True, (0, 0, 255), 2)
     
     for box in proposal:
         plot_corners = create_corners(box[0], box[1], box[2], box[3])
-        plot_corners[:, 1] = intensity.shape[0] - plot_corners[:, 1]
+        plot_corners[:, 0] = intensity.shape[0] - plot_corners[:, 0]
         plot_corners = plot_corners.astype(np.int32).reshape((-1, 1, 2))
         cv2.polylines(intensity, [plot_corners], True, (0, 255, 0), 2)
 
