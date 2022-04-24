@@ -25,8 +25,8 @@ def iou(box1, box2):
 def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5):
     AP = []
     for class_num in range(9):
-        valid_gt_boxes = torch.zeros((0, 6))
-        valid_pred_boxes = torch.zeros((0, 7))
+        # valid_gt_boxes = torch.zeros((0, 6))
+        # valid_pred_boxes = torch.zeros((0, 7))
 
         valid_gt_boxes_ind = torch.where(gt_boxes[:,1] == class_num)
         valid_gt_boxes = gt_boxes[valid_gt_boxes_ind]
@@ -41,6 +41,7 @@ def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5):
         TP = torch.zeros((valid_pred_boxes.shape[0]))
         total_gts = valid_gt_boxes.shape[0]
         if total_gts == 0:
+            print("WHy")
             AP.append(torch.tensor([0]))
             continue
         

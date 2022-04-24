@@ -54,24 +54,20 @@ class WSDDNPIXOR(nn.Module):
         out = self.backbone(x)
         conv_features = self.encoder(out)
         conv_features = self.adaptive_pool(conv_features)
-        print(conv_features.shape)
         h, w = conv_features.shape[2], conv_features.shape[3]
         spp_output = self.roi_pool(conv_features, [rois], self.roi_size, (h/x.shape[2]))
         spp_output = spp_output.reshape(spp_output.shape[0], -1)
         classifier_ouput = self.classifier(spp_output)
         class_scores = self.score_fc(classifier_ouput)
-        class_scores = nn.functional.softmax(class_scores, dim=1)
-        
         bbox_scores = self.bbox_fc(classifier_ouput)
-        bbox_scores = nn.functional.softmax(bbox_scores, dim=0)
-
         cls_prob = class_scores * bbox_scores
         return cls_prob 
 
 if __name__ == '__main__':
-    x = torch.randn((1, 36, 800, 700)).cuda()
-    model = WSDDNPIXOR()
-    model = model.cuda()
-    rois = torch.randn((100, 4)).cuda()
-    out = model(x, rois)
-    print(out.shape)
+    pass
+    # x = torch.randn((1, 36, 800, 700)).cuda()
+    # model = WSDDNPIXOR()
+    # model = model.cuda()
+    # rois = torch.randn((100, 4)).cuda()
+    # out = model(x, rois)
+    # print(out.shape)
