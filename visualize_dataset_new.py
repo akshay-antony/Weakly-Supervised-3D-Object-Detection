@@ -7,19 +7,28 @@ import os
 from tqdm import tqdm
 
 
-def plot_proposals_gt(gt, proposal):
+def plot_proposals_gt(gt, proposal, pc_feature):
     image = np.ones((800,700), dtype=np.uint8)
+    image = image * 255
     gt = gt.astype(np.int32)
     proposal = proposal.astype(np.int32)
+
+    pc_feature = pc_feature.numpy()
+    pc_feature = pc_feature[::-1, :, :-1]
+
+    val = 1 - pc_feature.max(axis=2)
+    val = val.astype(np.uint8)
+    
+
     fig, ax = plt.subplots()
     ax.imshow(image)
 
     # plotting gt boxes
     for i in range(gt.shape[0]):
-        x1 = gt[i, 0]
-        y1 = gt[i, 1]
-        x2 = gt[i, 2]
-        y2 = gt[i, 3]
+        y1 = gt[i, 0]
+        x1 = gt[i, 1]
+        y2 = gt[i, 2]
+        x2 = gt[i, 3]
         height = y2 - y1
         width = x2 - x1
         corner = (x1, y1)
@@ -28,10 +37,10 @@ def plot_proposals_gt(gt, proposal):
 
     # plotting proposal boxes
     for i in range(proposal.shape[0]):
-        x1 = proposal[i, 0]
-        y1 = proposal[i, 1]
-        x2 = proposal[i, 2]
-        y2 = proposal[i, 3]
+        y1 = proposal[i, 0]
+        x1 = proposal[i, 1]
+        y2 = proposal[i, 2]
+        x2 = proposal[i, 3]
         height = y2 - y1
         width = x2 - x1
         corner = (x1, y1)
