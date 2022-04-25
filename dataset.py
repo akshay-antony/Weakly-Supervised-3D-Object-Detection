@@ -49,7 +49,8 @@ class KITTIBEV(Dataset):
                 line = line.split("\n")[0]
                 self.filenames_list.append(line)
         
-        self.inv_class = {class_name: i for i, class_name in enumerate(self.class_names)}
+        self.inv_class = {i: class_name for i, class_name in enumerate(self.class_names)}
+        self.class_to_int = {class_name: i for i, class_name in enumerate(self.class_names)}
 
         ####
         self.preload_proposals = []
@@ -75,20 +76,17 @@ class KITTIBEV(Dataset):
     def __getitem__(self, index: int):
         filename = self.filenames_list[index]
         bev = self.load_velo_scan(index)
-        bev = self.lidar_preprocess(bev)
-        print(bev.shape)
+        #bev = self.lidar_preprocess(bev)
         bev = bev.transpose(2, 0, 1)
         proposals = self.preload_proposals[index]
         labels = self.preload_labels[index] 
         gt_boxes = self.preload_gt_boxes[index]
-        print(gt_boxes)
         gt_class_list = self.preload_gt_class_list[index] # .get_labels(self.filenames_list[index])
         # print(labels.shape, proposals.shape, gt_boxes.shape, gt_class_list.shape)
         # print(len(self.preload_proposals),
         #       len(self.preload_labels),
         #       len(self.preload_gt_boxes),
         #       len(self.preload_gt_class_list))
-        print(self.filenames_list[index])
         return {'bev': torch.from_numpy(bev),
                 'labels': torch.from_numpy(labels),
                 'gt_boxes': torch.from_numpy(gt_boxes),
@@ -128,7 +126,7 @@ class KITTIBEV(Dataset):
         combined_augmented_boxes = np.concatenate([combined_boxes[:, 1].reshape(-1, 1),
                                                    combined_boxes[:, 0].reshape(-1, 1), 
                                                    combined_boxes[:, 4].reshape(-1, 1),
-                                                   new_y_max], axis=1)
+                                                   new_y_max.reshape(-1, 1)], axis=1)
         combined_augmented_boxes_2d = np.concatenate([combined_boxes_2d,
                                                      combined_augmented_boxes], axis=0)
         combined_augmented_boxes_2d = self.scale_bev(combined_augmented_boxes_2d)
@@ -173,8 +171,8 @@ class KITTIBEV(Dataset):
                 x = line.split(" ")
                 if x[0] == 'DontCare':
                     continue
-                label[self.inv_class[x[0]]] = 1
-                gt_class_list.append(self.inv_class[x[0]])
+                label[self.class_to_int[x[0]]] = 1
+                gt_class_list.append(self.class_to_int[x[0]])
                 curr_box_labels = [float(x[i]) for i in range(8, 15)]
                 gt_box_curr = self.get_gt_bbox(curr_box_labels)
                 if gt_box_curr[0, 1] >= 300:
@@ -230,11 +228,11 @@ class KITTIBEV(Dataset):
         if self.use_npy:
             scan = np.load(filename[:-4]+'.npy')
         else:
-            # c_name = bytes(filename, 'utf-8')
-            # scan = np.zeros(self.geometry['input_shape'], dtype=np.float32)
-            # c_data = ctypes.c_void_p(scan.ctypes.data)
-            # self.LidarLib.createTopViewMaps(c_data, c_name)
-            scan = np.fromfile(filename, dtype=np.float32).reshape(-1, 4)
+            c_name = bytes(filename, 'utf-8')
+            scan = np.zeros(self.geometry['input_shape'], dtype=np.float32)
+            c_data = ctypes.c_void_p(scan.ctypes.data)
+            self.LidarLib.createTopViewMaps(c_data, c_name)
+            #scan = np.fromfile(filename, dtype=np.float32).reshape(-1, 4)
             
         return scan
 
