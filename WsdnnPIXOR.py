@@ -18,10 +18,10 @@ geometry = {
 
 class WSDDNPIXOR(nn.Module):
     def __init__(self, 
-                roi_size=(12, 12)):
+                roi_size=(8, 8)):
         super(WSDDNPIXOR, self).__init__()
         self.roi_size = roi_size
-        self.n_classes = 9
+        self.n_classes = 8
         self.backbone = BackBone(Bottleneck, 
                                 [3, 6, 6, 3], 
                                 geometry, 
@@ -34,21 +34,22 @@ class WSDDNPIXOR(nn.Module):
                             nn.Conv2d(256, 256, (3, 3), (1, 1), (1, 1)),
                             nn.ReLU(),
                             nn.MaxPool2d((3, 3), (2, 2), (1, 1)))
-
+        # self.encoder = nn.Identity()
+        # self.adaptive_pool = nn.Identity()
         self.adaptive_pool = nn.AdaptiveAvgPool2d((40, 35))
-        self.roi_pool = torchvision.ops.roi_pool
+        self.roi_pool = torchvision.ops.roi_align
         self.classifier = nn.Sequential(
-                        nn.Linear(256*self.roi_size[0]*self.roi_size[1], 2*4096), 
+                        nn.Linear(256*self.roi_size[0]*self.roi_size[1], 4096), 
                         nn.ReLU(inplace=True), 
-                        nn.Linear(2*4096, 2*1024), 
+                        nn.Linear(4096, 4096), 
                         nn.ReLU(inplace=True))
 
         self.score_fc   = nn.Sequential(
-                            nn.Linear(2*1024, self.n_classes),
+                            nn.Linear(4096, self.n_classes),
                             nn.Softmax(dim=1))
 
         self.bbox_fc    = nn.Sequential(
-                            nn.Linear(2*1024, self.n_classes),
+                            nn.Linear(4096, self.n_classes),
                             nn.Softmax(dim=0))
 
     def forward(self, 
@@ -59,7 +60,7 @@ class WSDDNPIXOR(nn.Module):
         conv_features = self.encoder(out)
         conv_features = self.adaptive_pool(conv_features)
         h, w = conv_features.shape[2], conv_features.shape[3]
-        spp_output = self.roi_pool(conv_features, [rois], self.roi_size, (h/x.shape[2]))
+        spp_output = self.roi_pool(conv_features, [rois], self.roi_size, h/x.shape[2])
         spp_output = spp_output.reshape(spp_output.shape[0], -1)
         classifier_ouput = self.classifier(spp_output)
         class_scores = self.score_fc(classifier_ouput)
@@ -69,9 +70,9 @@ class WSDDNPIXOR(nn.Module):
 
 if __name__ == '__main__':
     pass
-    # x = torch.randn((1, 36, 800, 700)).cuda()
-    # model = WSDDNPIXOR()
-    # model = model.cuda()
-    # rois = torch.randn((100, 4)).cuda()
-    # out = model(x, rois)
-    # print(out.shape)
+    x = torch.randn((1, 36, 800, 700)).cuda()
+    model = WSDDNPIXOR()
+    model = model.cuda()
+    rois = torch.randn((100, 4)).cuda()
+    out = model(x, rois)
+    print(out.shape)

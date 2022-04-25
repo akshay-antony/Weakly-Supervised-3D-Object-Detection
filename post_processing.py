@@ -22,7 +22,7 @@ def iou(box1, box2):
     return iou
 
 
-def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5):
+def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5, inv_class=None):
     AP = []
     class_wise_correct_found = np.zeros((8))
     for class_num in range(8):
@@ -83,6 +83,16 @@ def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5):
 
 
         AP.append(ap)
-        wandb.log({"Found these many correct for " + str(class_num), class_wise_correct_found[class_num]})
+        wandb.log({"Class Ap of " + inv_class[class_num] + 
+                   " @iou " + str(iou_threshold): ap})
+        wandb.log({"Percentage detected of " + 
+                    inv_class[class_num] + " @iou " + 
+                    str(iou_threshold): class_wise_correct_found[class_num] / total_gts})
+        wandb.log({"Found these many correct for " + 
+                    inv_class[class_num] + " @iou " + 
+                    str(iou_threshold): class_wise_correct_found[class_num]})
+        wandb.log({"Found these many total for " + 
+                    inv_class[class_num] + " @iou " + 
+                    str(iou_threshold): total_gts})
         #AP.append(torch.trapz(precisions, recalls))
     return AP
