@@ -1,7 +1,7 @@
 import numpy as np 
 import torch 
 from tqdm import tqdm
-
+import wandb
 
 def iou(box1, box2):
     """
@@ -24,7 +24,8 @@ def iou(box1, box2):
 
 def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5):
     AP = []
-    for class_num in range(9):
+    class_wise_correct_found = np.zeros((8))
+    for class_num in range(8):
         # valid_gt_boxes = torch.zeros((0, 6))
         # valid_pred_boxes = torch.zeros((0, 7))
 
@@ -61,6 +62,7 @@ def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5):
                 if (best_gt_idx, valid_pred_boxes[i,0]) in taken_gt_boxes:
                     FP[i] = 1 
                 else:
+                    class_wise_correct_found[class_num] += 1
                     taken_gt_boxes.add((best_gt_idx, valid_pred_boxes[i,0]))
                     TP[i] = 1 
             else:
@@ -81,5 +83,6 @@ def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5):
 
 
         AP.append(ap)
+        wandb.log({"Found these many correct for " + str(class_num), class_wise_correct_found[class_num]})
         #AP.append(torch.trapz(precisions, recalls))
     return AP

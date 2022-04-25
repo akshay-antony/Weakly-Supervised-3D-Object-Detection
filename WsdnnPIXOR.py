@@ -17,7 +17,8 @@ geometry = {
     }
 
 class WSDDNPIXOR(nn.Module):
-    def __init__(self, roi_size=(12, 12)):
+    def __init__(self, 
+                roi_size=(12, 12)):
         super(WSDDNPIXOR, self).__init__()
         self.roi_size = roi_size
         self.n_classes = 9
@@ -50,7 +51,10 @@ class WSDDNPIXOR(nn.Module):
                             nn.Linear(2*1024, self.n_classes),
                             nn.Softmax(dim=0))
 
-    def forward(self, x, rois=None):
+    def forward(self, 
+                x, 
+                rois=None,
+                should_return=False):
         out = self.backbone(x)
         conv_features = self.encoder(out)
         conv_features = self.adaptive_pool(conv_features)
@@ -60,7 +64,7 @@ class WSDDNPIXOR(nn.Module):
         classifier_ouput = self.classifier(spp_output)
         class_scores = self.score_fc(classifier_ouput)
         bbox_scores = self.bbox_fc(classifier_ouput)
-        cls_prob = class_scores * bbox_scores
+        cls_prob = class_scores * bbox_scores 
         return cls_prob 
 
 if __name__ == '__main__':

@@ -21,8 +21,8 @@ class KITTIBEV(Dataset):
                             'Person_sitting', 
                             'Cyclist', 
                             'Tram',
-                            'Misc',
-                            'DontCare']
+                            'Misc']
+
         self.geometry = {'L1': -40.0,
                         'L2': 40.0,
                         'W1': 0.0,
@@ -75,17 +75,20 @@ class KITTIBEV(Dataset):
     def __getitem__(self, index: int):
         filename = self.filenames_list[index]
         bev = self.load_velo_scan(index)
+        bev = self.lidar_preprocess(bev)
+        print(bev.shape)
         bev = bev.transpose(2, 0, 1)
         proposals = self.preload_proposals[index]
         labels = self.preload_labels[index] 
         gt_boxes = self.preload_gt_boxes[index]
+        print(gt_boxes)
         gt_class_list = self.preload_gt_class_list[index] # .get_labels(self.filenames_list[index])
         # print(labels.shape, proposals.shape, gt_boxes.shape, gt_class_list.shape)
         # print(len(self.preload_proposals),
         #       len(self.preload_labels),
         #       len(self.preload_gt_boxes),
         #       len(self.preload_gt_class_list))
-
+        print(self.filenames_list[index])
         return {'bev': torch.from_numpy(bev),
                 'labels': torch.from_numpy(labels),
                 'gt_boxes': torch.from_numpy(gt_boxes),
@@ -116,8 +119,46 @@ class KITTIBEV(Dataset):
                                             combined_boxes[:, 0].reshape(-1, 1), 
                                             combined_boxes[:, 4].reshape(-1, 1), 
                                             combined_boxes[:, 3].reshape(-1, 1)], axis=1)
-        combined_boxes_2d = self.scale_bev(combined_boxes_2d)
-        return combined_boxes_2d
+
+        ##### box augmentation
+        augment_distance = (combined_boxes[:,3] - combined_boxes[:, 0]).reshape(-1, 1) * 2 # N*1
+        new_y_max = combined_boxes[:, 0].reshape(-1, 1) + augment_distance
+        new_y_max = np.where(new_y_max[:, 0] >= 70, 69, new_y_max[:, 0])
+        #####
+        combined_augmented_boxes = np.concatenate([combined_boxes[:, 1].reshape(-1, 1),
+                                                   combined_boxes[:, 0].reshape(-1, 1), 
+                                                   combined_boxes[:, 4].reshape(-1, 1),
+                                                   new_y_max], axis=1)
+        combined_augmented_boxes_2d = np.concatenate([combined_boxes_2d,
+                                                     combined_augmented_boxes], axis=0)
+        combined_augmented_boxes_2d = self.scale_bev(combined_augmented_boxes_2d)
+        #####
+        return combined_augmented_boxes_2d
+    
+    def lidar_preprocess(self, scan):
+        velo = scan
+        velo_processed = np.zeros(self.geometry['input_shape'], dtype=np.float32)
+        intensity_map_count = np.zeros((velo_processed.shape[0], velo_processed.shape[1]))
+        for i in range(velo.shape[0]):
+            if self.point_in_roi(velo[i, :]):
+                x = int((velo[i, 1]-self.geometry['L1']) / 0.1)
+                y = int((velo[i, 0]-self.geometry['W1']) / 0.1)
+                z = int((velo[i, 2]-self.geometry['H1']) / 0.1)
+                velo_processed[x, y, z] = 1
+                velo_processed[x, y, -1] += velo[i, 3]
+                intensity_map_count[x, y] += 1
+        velo_processed[:, :, -1] = np.divide(velo_processed[:, :, -1],  intensity_map_count, \
+                        where=intensity_map_count!=0)
+        return velo_processed
+    
+    def point_in_roi(self, point):
+        if (point[0] - self.geometry['W1']) < 0.01 or (self.geometry['W2'] - point[0]) < 0.01:
+            return False
+        if (point[1] - self.geometry['L1']) < 0.01 or (self.geometry['L2'] - point[1]) < 0.01:
+            return False
+        if (point[2] - self.geometry['H1']) < 0.01 or (self.geometry['H2'] - point[2]) < 0.01:
+            return False
+        return True
 
     def get_labels(self, filename):
         label = np.zeros((self.num_classes,))
@@ -130,10 +171,14 @@ class KITTIBEV(Dataset):
         with open(label_filename, "r") as f:
             for line in f.readlines():
                 x = line.split(" ")
+                if x[0] == 'DontCare':
+                    continue
                 label[self.inv_class[x[0]]] = 1
                 gt_class_list.append(self.inv_class[x[0]])
                 curr_box_labels = [float(x[i]) for i in range(8, 15)]
                 gt_box_curr = self.get_gt_bbox(curr_box_labels)
+                if gt_box_curr[0, 1] >= 300:
+                    continue
                 gt_boxes = np.concatenate([gt_boxes, gt_box_curr], axis=0)
         return label, gt_boxes, np.asarray(gt_class_list).reshape(-1)
 
@@ -147,15 +192,33 @@ class KITTIBEV(Dataset):
 
     def get_gt_bbox(self, bbox):
         w, h, l, y, z, x, yaw = bbox
-        bev_corners = np.zeros((1, 4), dtype=np.float32)
+        y = -y
+        yaw = -(yaw + np.pi / 2)
+        bev_corners = np.zeros((4, 2), dtype=np.float32)
         # rear left
-        bev_corners[0, 1] = x - w/2 
-        bev_corners[0, 0] = y - l/2 
+        bev_corners[0, 0] = x - l/2 * np.cos(yaw) - w/2 * np.sin(yaw)
+        bev_corners[0, 1] = y - l/2 * np.sin(yaw) + w/2 * np.cos(yaw)
+
+        # rear right
+        bev_corners[1, 0] = x - l/2 * np.cos(yaw) + w/2 * np.sin(yaw)
+        bev_corners[1, 1] = y - l/2 * np.sin(yaw) - w/2 * np.cos(yaw)
 
         # front right
-        bev_corners[0, 3] = x + w/2 
-        bev_corners[0, 2] = y + l/2  
-        return self.scale_bev(bev_corners)
+        bev_corners[2, 0] = x + l/2 * np.cos(yaw) + w/2 * np.sin(yaw)
+        bev_corners[2, 1] = y + l/2 * np.sin(yaw) - w/2 * np.cos(yaw)
+
+        # front left
+        bev_corners[3, 0] = x + l/2 * np.cos(yaw) - w/2 * np.sin(yaw)
+        bev_corners[3, 1] = y + l/2 * np.sin(yaw) + w/2 * np.cos(yaw)
+
+        max_x = np.max(bev_corners[:, 0])
+        min_x = np.min(bev_corners[:, 0])
+        max_y = np.max(bev_corners[:, 1])
+        min_y = np.min(bev_corners[:, 1])
+
+        bev = np.array([min_y, min_x, max_y, max_x]).reshape(-1, 4)
+        bev = self.scale_bev(bev)
+        return bev
 
     def load_velo_scan(self, index):
         """Helper method to parse velodyne binary files into a list of scans."""
@@ -167,11 +230,11 @@ class KITTIBEV(Dataset):
         if self.use_npy:
             scan = np.load(filename[:-4]+'.npy')
         else:
-            c_name = bytes(filename, 'utf-8')
-            scan = np.zeros(self.geometry['input_shape'], dtype=np.float32)
-            c_data = ctypes.c_void_p(scan.ctypes.data)
-            self.LidarLib.createTopViewMaps(c_data, c_name)
-            #scan = np.fromfile(filename, dtype=np.float32).reshape(-1, 4)
+            # c_name = bytes(filename, 'utf-8')
+            # scan = np.zeros(self.geometry['input_shape'], dtype=np.float32)
+            # c_data = ctypes.c_void_p(scan.ctypes.data)
+            # self.LidarLib.createTopViewMaps(c_data, c_name)
+            scan = np.fromfile(filename, dtype=np.float32).reshape(-1, 4)
             
         return scan
 

@@ -94,6 +94,7 @@ def validate(test_loader,
                                                                retained_proposals[i]]).reshape(1, -1)
                 all_pred_boxes = torch.cat([all_pred_boxes, modified_pred_boxes], dim=0)
     
+    print("Calculating iou..")
     for iou in iou_list:
         AP = calculate_ap(all_pred_boxes, all_gt_boxes, iou)
         mAP = 0 if len(AP) == 0 else sum(AP) / len(AP)
