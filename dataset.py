@@ -57,6 +57,8 @@ class KITTIBEV(Dataset):
         count = 0
         mi = -100000
         ccx = 0
+        prop_max = -1
+        prop_min = 10000
         print("Preloading Data")
         for filename in tqdm(filenames_list,
                             total=len(filenames_list),
@@ -71,9 +73,15 @@ class KITTIBEV(Dataset):
             self.preload_gt_class_list.append(gt_class_list)
             self.filenames_list.append(filename)
             proposals = self.get_proposals(filename)
+            assert(gt_class_list.shape[0] == gt_class_list.shape[0])
+            assert np.min(proposals[:, 0]) >= 0, "x_min"
+            assert np.max(proposals[:, 2]) < 401, "x_max"
+            assert np.max(proposals[:, 3]) < 350, "y_max"
             self.preload_proposals.append(proposals)
-            
+            prop_max = max(prop_max, proposals.shape[0])
+            prop_min = min(prop_min, proposals.shape[0])
         ####
+        print(prop_max, prop_min)
 
     def __len__(self) -> int:
         return len(self.filenames_list)
@@ -87,7 +95,7 @@ class KITTIBEV(Dataset):
         labels = self.preload_labels[index] 
         gt_boxes = self.preload_gt_boxes[index]
         gt_class_list = self.preload_gt_class_list[index] # .get_labels(self.filenames_list[index])
-      
+        print(self.filenames_list[index], gt_boxes.shape, gt_class_list.shape, proposals.shape)
         return {'bev': torch.from_numpy(bev),
                 'labels': torch.from_numpy(labels),
                 'gt_boxes': torch.from_numpy(gt_boxes),
@@ -102,9 +110,9 @@ class KITTIBEV(Dataset):
                                             pcl_boxes[:, 3].reshape(-1, 1)], axis=1)
 
         pcl_boxes = self.scale_bev(pcl_boxes_aranged)
-        valid_idx_in_ = np.where(pcl_boxes[:, 0] <= 599)
+        valid_idx_in_ = np.where(pcl_boxes[:, 0] < 400)
         pcl_boxes = pcl_boxes[valid_idx_in_]
-        valid_idx_in_ = np.where(pcl_boxes[:, 2] >= 200)
+        valid_idx_in_ = np.where(pcl_boxes[:, 2] >= 0)
         pcl_boxes = pcl_boxes[valid_idx_in_]
         valid_idx_in_ = np.where(pcl_boxes[:, 1] <= 349)
         pcl_boxes = pcl_boxes[valid_idx_in_]
@@ -115,7 +123,7 @@ class KITTIBEV(Dataset):
             #####
             augment_distance = (pcl_boxes[:, 3] - pcl_boxes[:, 1]).reshape(-1, 1) * rand_value # N*1
             new_y_max = pcl_boxes[:, 1].reshape(-1, 1) + augment_distance
-            new_y_max = np.where(new_y_max[:, 0] >= 700, 699, new_y_max[:, 0])
+            new_y_max = np.where(new_y_max[:, 0] >= 350, 349, new_y_max[:, 0])
             #####
 
             #####
@@ -126,7 +134,7 @@ class KITTIBEV(Dataset):
             new_x_max = pcl_boxes[:, 0].reshape(-1, 1) + augment_distance
             new_x_max = np.where(new_x_max[:, 0] >= 400, 399, new_x_max[:, 0])
             new_x_min = pcl_boxes[:, 0].reshape(-1, 1) - augment_distance
-            new_x_min = np.where(new_x_min[:, 0] < -400, -400, new_x_min[:, 0])
+            new_x_min = np.where(new_x_min[:, 0] <= 0, 0, new_x_min[:, 0])
             #####
             
             augmented_box = np.concatenate([new_x_min.reshape(-1, 1),
@@ -183,9 +191,9 @@ class KITTIBEV(Dataset):
         combined_augmented_boxes_2d = self.scale_bev(combined_augmented_boxes_2d)
 
         ######## cropping
-        valid_idx_in_ = np.where(combined_augmented_boxes_2d[:, 0] <= 599)
+        valid_idx_in_ = np.where(combined_augmented_boxes_2d[:, 0] < 400)
         combined_augmented_boxes_2d = combined_augmented_boxes_2d[valid_idx_in_]
-        valid_idx_in_ = np.where(combined_augmented_boxes_2d[:, 2] >= 200)
+        valid_idx_in_ = np.where(combined_augmented_boxes_2d[:, 2] >= 0)
         combined_augmented_boxes_2d = combined_augmented_boxes_2d[valid_idx_in_]
         valid_idx_in_ = np.where(combined_augmented_boxes_2d[:, 1] <= 349)
         combined_augmented_boxes_2d = combined_augmented_boxes_2d[valid_idx_in_]
@@ -196,9 +204,12 @@ class KITTIBEV(Dataset):
         ########
 
         combined_augmented_boxes_2d = np.concatenate([combined_augmented_boxes_2d, pcl_augmented], axis=0)
-        combined_augmented_boxes_2d[:, 0] = np.where(combined_augmented_boxes_2d[:, 0] < 200, 200, combined_augmented_boxes_2d[:, 0])
-        combined_augmented_boxes_2d[:, 2] = np.where(combined_augmented_boxes_2d[:, 2] >= 600, 599, combined_augmented_boxes_2d[:, 2])
-        combined_augmented_boxes_2d[:, 3] = np.where(combined_augmented_boxes_2d[:, 3] >= 350, 349, combined_augmented_boxes_2d[:, 3])
+        combined_augmented_boxes_2d[:, 0] = np.where(combined_augmented_boxes_2d[:, 0] < 0, 
+                                            0, combined_augmented_boxes_2d[:, 0])
+        combined_augmented_boxes_2d[:, 2] = np.where(combined_augmented_boxes_2d[:, 2] >= 400,
+                                            399, combined_augmented_boxes_2d[:, 2])
+        combined_augmented_boxes_2d[:, 3] = np.where(combined_augmented_boxes_2d[:, 3] >= 350, 
+                                            349, combined_augmented_boxes_2d[:, 3])
 
         return combined_augmented_boxes_2d
     
@@ -243,12 +254,6 @@ class KITTIBEV(Dataset):
                 x = line.split(" ")
                 if x[0] == 'DontCare':
                     continue
-                elif x[0] == 'Car':
-                    label[0] = 1
-                    gt_class_list.append(0)
-                else:
-                    label[1] = 1
-                    gt_class_list.append(1)
                 
                 curr_box_labels = [float(x[i]) for i in range(8, 15)]
                 gt_box_curr = self.get_gt_bbox(curr_box_labels)
@@ -256,12 +261,19 @@ class KITTIBEV(Dataset):
                 #####
                 ###change this, in bev return and proposal return and wandb
                 if gt_box_curr[0, 1] >= 350 or \
-                   gt_box_curr[0, 2] <= 200 or \
-                   gt_box_curr[0, 0] >= 600:
+                   gt_box_curr[0, 2] < 0 or \
+                   gt_box_curr[0, 0] >= 400:
                     continue
                 gt_box_curr[0, 3] = np.where(gt_box_curr[0, 3] >= 350, 349, gt_box_curr[0, 3])
-                gt_box_curr[0, 0] = np.where(gt_box_curr[0, 0] <= 200, 200, gt_box_curr[0, 0])
-                gt_box_curr[0, 2] = np.where(gt_box_curr[0, 2] >= 600, 599, gt_box_curr[0, 2]) 
+                gt_box_curr[0, 0] = np.where(gt_box_curr[0, 0] <= 0, 0, gt_box_curr[0, 0])
+                gt_box_curr[0, 2] = np.where(gt_box_curr[0, 2] >= 400, 399, gt_box_curr[0, 2]) 
+                if x[0] == 'Car':
+                    label[0] = 1
+                    gt_class_list.append(0)
+                else:
+                    label[1] = 1
+                    gt_class_list.append(1)
+                
                 ######
                 # if gt_box_curr[0, 0] < 200 or gt_box_curr[0, 2] >= 600:
                 #     print(gt_box_curr[0, 0], gt_box_curr[0, 2], gt_box_curr[0, 3])

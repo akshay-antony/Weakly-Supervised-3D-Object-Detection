@@ -30,10 +30,10 @@ class WSDDNPIXOR(nn.Module):
         self.encoder = nn.Sequential(
                             nn.Conv2d(96, 256, (3, 3), (1, 1), (1, 1)),
                             nn.ReLU(),
-                            nn.MaxPool2d((3,3), (2, 2), (1, 1)),
-                            nn.Conv2d(256, 256, (3, 3), (1, 1), (1, 1)),
-                            nn.ReLU(),
-                            nn.MaxPool2d((3, 3), (2, 2), (1, 1)))
+                            nn.MaxPool2d((3,3), (2, 2), (1, 1)),)
+                            # nn.Conv2d(256, 256, (3, 3), (1, 1), (1, 1)),
+                            # nn.ReLU(),
+                            # nn.MaxPool2d((3, 3), (2, 2), (1, 1)))
         # self.encoder = nn.Identity()
         # self.adaptive_pool = nn.Identity()
         self.adaptive_pool = nn.AdaptiveAvgPool2d((40, 35))
@@ -70,7 +70,7 @@ class WSDDNPIXOR(nn.Module):
 
 if __name__ == '__main__':
     pass
-    x = torch.randn((1, 36, 800, 700)).cuda()
+    x = torch.randn((1, 36, 400, 350)).cuda()
     model = WSDDNPIXOR()
     model = model.cuda()
     rois = torch.randn((100, 4)).cuda()
