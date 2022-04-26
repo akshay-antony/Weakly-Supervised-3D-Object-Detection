@@ -1,3 +1,4 @@
+from itertools import count
 from matplotlib.lines import Line2D
 import numpy as np
 import torch
@@ -29,7 +30,7 @@ class KITTIBEV(Dataset):
                         'W2': 70.0,
                         'H1': -2.5,
                         'H2': 1.0,
-                        'input_shape': (800, 700, 36),
+                        'input_shape': (400, 350, 36),
                         'label_shape': (200, 175, 7)}
 
         self.use_npy = False
@@ -58,16 +59,26 @@ class KITTIBEV(Dataset):
         self.preload_gt_boxes = []
         self.preload_gt_class_list = []
 
+        count = 0
+        mi = -100000
+        ccx = 0
         print("Preloading Data")
         for filename in tqdm(self.filenames_list,
                             total=len(self.filenames_list),
                             leave=False):
             proposals = self.get_proposals(filename)
+            mi = max(mi, proposals.shape[0])
+            if proposals.shape[0] < 100:
+                count += 1
+                
+                if proposals.shape[0] == 0:
+                    ccx += 1
             self.preload_proposals.append(proposals)
             labels, gt_boxes, gt_class_list = self.get_labels(filename)
             self.preload_labels.append(labels)
             self.preload_gt_boxes.append(gt_boxes)
             self.preload_gt_class_list.append(gt_class_list)
+        print(count, mi, ccx)
         ####
 
     def __len__(self) -> int:
@@ -93,6 +104,52 @@ class KITTIBEV(Dataset):
                 'proposals': torch.from_numpy(proposals),
                 'gt_class_list': torch.from_numpy(gt_class_list)}
 
+    def augment_pcl(self, pcl_boxes):
+        np.random.seed(200)
+        pcl_boxes_aranged = np.concatenate([pcl_boxes[:, 1].reshape(-1, 1),
+                                            pcl_boxes[:, 0].reshape(-1, 1), 
+                                            pcl_boxes[:, 4].reshape(-1, 1), 
+                                            pcl_boxes[:, 3].reshape(-1, 1)], axis=1)
+
+        pcl_boxes = self.scale_bev(pcl_boxes_aranged)
+        valid_idx_in_ = np.where(pcl_boxes[:, 0] <= 599)
+        pcl_boxes = pcl_boxes[valid_idx_in_]
+        valid_idx_in_ = np.where(pcl_boxes[:, 2] >= 200)
+        pcl_boxes = pcl_boxes[valid_idx_in_]
+        valid_idx_in_ = np.where(pcl_boxes[:, 1] <= 349)
+        pcl_boxes = pcl_boxes[valid_idx_in_]
+
+        rand_values = np.random.uniform(low=1., high=2.5, size=(3))
+        total_boxes = np.zeros((0, 4))
+        for rand_value in rand_values:
+            #####
+            augment_distance = (pcl_boxes[:, 3] - pcl_boxes[:, 1]).reshape(-1, 1) * rand_value # N*1
+            new_y_max = pcl_boxes[:, 1].reshape(-1, 1) + augment_distance
+            new_y_max = np.where(new_y_max[:, 0] >= 700, 699, new_y_max[:, 0])
+            #####
+
+            #####
+            augment_distance = (pcl_boxes[:, 2] - pcl_boxes[:, 0]).reshape(-1, 1) * rand_value/2 # N*1
+            new_x_max = pcl_boxes[:, 0].reshape(-1, 1) + augment_distance
+            new_x_max = np.where(new_x_max[:, 0] >= 40, 39.9, new_x_max[:, 0])
+            new_x_min = pcl_boxes[:, 0].reshape(-1, 1) - augment_distance
+            new_x_min = np.where(new_x_min[:, 0] < -40, -40, new_x_min[:, 0])
+            #####
+            
+            augmented_box = np.concatenate([new_x_min.reshape(-1, 1),
+                                            pcl_boxes[:, 1].reshape(-1, 1),
+                                            new_x_max.reshape(-1, 1),
+                                            new_y_max.reshape(-1, 1)], axis = 1)
+            total_boxes = np.concatenate([total_boxes, augmented_box], axis=0)
+            # combined_augmented_boxes = np.concatenate([combined_boxes[:, 1].reshape(-1, 1),
+            #                                             combined_boxes[:, 0].reshape(-1, 1), 
+            #                                         combined_boxes[:, 4].reshape(-1, 1),
+            #                                         new_y_max.reshape(-1, 1)], axis=1)
+            # combined_augmented_boxes_2d = np.concatenate([combined_boxes_2d,
+            #                                             combined_augmented_boxes], axis=0)
+            # combined_augmented_boxes_2d = self.scale_bev(combined_augmented_boxes_2d)
+        return total_boxes
+
     def get_proposals(self, filename):
         pcl_proposal_filename = os.path.join(self.lidar_folder_name,
                                              self.sub_folder,
@@ -103,10 +160,11 @@ class KITTIBEV(Dataset):
                                                 "bbox",
                                                 filename + ".txt")
         pcl_boxes = load_bbox(pcl_proposal_filename, pcl=True)
-        pcl_boxes[:, 1] = np.where(pcl_boxes[:, 1] < -40, -40, pcl_boxes[:, 1]) #np.max(pcl_boxes[:, 2], -40)
-        pcl_boxes[:, 3] = np.where(pcl_boxes[:, 3] > 70, 70, pcl_boxes[:, 3]) #np.min(pcl_boxes[:, 3], 70)
-        pcl_boxes[:, 4] = np.where(pcl_boxes[:, 4] > 40, 40, pcl_boxes[:, 4]) #np.min(pcl_boxes[:, 4], 40)
+        pcl_boxes[:, 1] = np.where(pcl_boxes[:, 1] <= -40, -40, pcl_boxes[:, 1]) #np.max(pcl_boxes[:, 2], -40)
+        pcl_boxes[:, 3] = np.where(pcl_boxes[:, 3] >= 70, 69.9, pcl_boxes[:, 3]) #np.min(pcl_boxes[:, 3], 70)
+        pcl_boxes[:, 4] = np.where(pcl_boxes[:, 4] >= 40, 39.9, pcl_boxes[:, 4]) #np.min(pcl_boxes[:, 4], 40)
 
+        pcl_augmented = self.augment_pcl(pcl_boxes)
         dbscan_boxes = load_bbox(dbscan_proposal_filename, pcl=False) 
         dbscan_filtered_boxes = filter_boxes(dbscan_boxes,
                                             100 - pcl_boxes.shape[0])
@@ -121,7 +179,7 @@ class KITTIBEV(Dataset):
         ##### box augmentation
         augment_distance = (combined_boxes[:,3] - combined_boxes[:, 0]).reshape(-1, 1) * 2 # N*1
         new_y_max = combined_boxes[:, 0].reshape(-1, 1) + augment_distance
-        new_y_max = np.where(new_y_max[:, 0] >= 70, 69, new_y_max[:, 0])
+        new_y_max = np.where(new_y_max[:, 0] >= 70, 69.9, new_y_max[:, 0])
         #####
         combined_augmented_boxes = np.concatenate([combined_boxes[:, 1].reshape(-1, 1),
                                                    combined_boxes[:, 0].reshape(-1, 1), 
@@ -130,7 +188,25 @@ class KITTIBEV(Dataset):
         combined_augmented_boxes_2d = np.concatenate([combined_boxes_2d,
                                                      combined_augmented_boxes], axis=0)
         combined_augmented_boxes_2d = self.scale_bev(combined_augmented_boxes_2d)
-        #####
+
+        ######## cropping
+        valid_idx_in_ = np.where(combined_augmented_boxes_2d[:, 0] <= 599)
+        combined_augmented_boxes_2d = combined_augmented_boxes_2d[valid_idx_in_]
+        valid_idx_in_ = np.where(combined_augmented_boxes_2d[:, 2] >= 200)
+        combined_augmented_boxes_2d = combined_augmented_boxes_2d[valid_idx_in_]
+        valid_idx_in_ = np.where(combined_augmented_boxes_2d[:, 1] <= 349)
+        combined_augmented_boxes_2d = combined_augmented_boxes_2d[valid_idx_in_]
+        # if np.min(combined_augmented_boxes_2d[:, 0]) >= 600 or \
+        #    np.max(combined_augmented_boxes_2d[:, 2]) < 200 or \
+        #    np.max(combined_augmented_boxes_2d[:, 3]) >= 350:
+        #    print("hi")
+        ########
+
+        combined_augmented_boxes_2d = np.concatenate([combined_augmented_boxes_2d, pcl_augmented], axis=0)
+        combined_augmented_boxes_2d[:, 0] = np.where(combined_augmented_boxes_2d[:, 0] < 200, 200, combined_augmented_boxes_2d[:, 0])
+        combined_augmented_boxes_2d[:, 2] = np.where(combined_augmented_boxes_2d[:, 2] >= 600, 599, combined_augmented_boxes_2d[:, 2])
+        combined_augmented_boxes_2d[:, 3] = np.where(combined_augmented_boxes_2d[:, 3] >= 350, 349, combined_augmented_boxes_2d[:, 3])
+
         return combined_augmented_boxes_2d
     
     def lidar_preprocess(self, scan):
@@ -158,7 +234,9 @@ class KITTIBEV(Dataset):
             return False
         return True
 
-    def get_labels(self, filename):
+    def get_labels(self, 
+                  filename,
+                  map_height=400):
         label = np.zeros((self.num_classes,))
         gt_boxes = np.zeros((0, 4))
         gt_class_list = []
@@ -175,12 +253,24 @@ class KITTIBEV(Dataset):
                 gt_class_list.append(self.class_to_int[x[0]])
                 curr_box_labels = [float(x[i]) for i in range(8, 15)]
                 gt_box_curr = self.get_gt_bbox(curr_box_labels)
-                if gt_box_curr[0, 1] >= 300:
+
+                #####
+                ###change this, in bev return and proposal return and wandb
+                if gt_box_curr[0, 1] >= 350 or \
+                   gt_box_curr[0, 2] <= 200 or \
+                   gt_box_curr[0, 0] >= 600:
                     continue
+                gt_box_curr[0, 3] = np.where(gt_box_curr[0, 3] >= 350, 349, gt_box_curr[0, 3])
+                gt_box_curr[0, 0] = np.where(gt_box_curr[0, 0] <= 200, 200, gt_box_curr[0, 0])
+                gt_box_curr[0, 2] = np.where(gt_box_curr[0, 2] >= 600, 599, gt_box_curr[0, 2]) 
+                ######
+                if gt_box_curr[0, 0] < 200 or gt_box_curr[0, 2] >= 600:
+                    print(gt_box_curr[0, 0], gt_box_curr[0, 2], gt_box_curr[0, 3])
+
                 gt_boxes = np.concatenate([gt_boxes, gt_box_curr], axis=0)
         return label, gt_boxes, np.asarray(gt_class_list).reshape(-1)
 
-    def scale_bev(self, bev, map_height=800):
+    def scale_bev(self, bev, map_height=400):
         bev_new = bev / 0.1
         bev_new[:, 0] += int(map_height // 2)
         bev_new[:, 2] += int(map_height // 2)
@@ -216,6 +306,11 @@ class KITTIBEV(Dataset):
 
         bev = np.array([min_y, min_x, max_y, max_x]).reshape(-1, 4)
         bev = self.scale_bev(bev)
+        
+        ####
+        # bev_inverted = torch.tensor([bev[0, 1], bev[0, 0], bev[0, 3], bev[0, 2]]).reshape(1, -1)
+        # return bev_inverted
+        ####
         return bev
 
     def load_velo_scan(self, index):
