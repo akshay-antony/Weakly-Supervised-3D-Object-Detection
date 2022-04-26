@@ -16,18 +16,12 @@ class KITTIBEV(Dataset):
                 valid_data_list_filename=None):
 
         self.class_names = ['Car', 
-                            'Van', 
-                            'Truck',
-                            'Pedestrian', 
-                            'Person_sitting', 
-                            'Cyclist', 
-                            'Tram',
-                            'Misc']
+                            'Others']
 
-        self.geometry = {'L1': -40.0,
-                        'L2': 40.0,
+        self.geometry = {'L1': -20.0,
+                        'L2': 20.0,
                         'W1': 0.0,
-                        'W2': 70.0,
+                        'W2': 35.0,
                         'H1': -2.5,
                         'H2': 1.0,
                         'input_shape': (400, 350, 36),
@@ -43,12 +37,12 @@ class KITTIBEV(Dataset):
             self.sub_folder = 'training'
         else:
             self.sub_folder = 'testing'
-        self.filenames_list = []
+        filenames_list = []
 
         with open(valid_data_list_filename, "r") as f: 
             for line in f.readlines():
                 line = line.split("\n")[0]
-                self.filenames_list.append(line)
+                filenames_list.append(line)
         
         self.inv_class = {i: class_name for i, class_name in enumerate(self.class_names)}
         self.class_to_int = {class_name: i for i, class_name in enumerate(self.class_names)}
@@ -58,27 +52,27 @@ class KITTIBEV(Dataset):
         self.preload_labels = []
         self.preload_gt_boxes = []
         self.preload_gt_class_list = []
+        self.filenames_list = []
 
         count = 0
         mi = -100000
         ccx = 0
         print("Preloading Data")
-        for filename in tqdm(self.filenames_list,
-                            total=len(self.filenames_list),
+        for filename in tqdm(filenames_list,
+                            total=len(filenames_list),
                             leave=False):
-            proposals = self.get_proposals(filename)
-            mi = max(mi, proposals.shape[0])
-            if proposals.shape[0] < 100:
-                count += 1
-                
-                if proposals.shape[0] == 0:
-                    ccx += 1
-            self.preload_proposals.append(proposals)
             labels, gt_boxes, gt_class_list = self.get_labels(filename)
+            if gt_boxes.shape[0] == 0:
+                filenames_list.remove(filename)
+                ccx += 1
+                continue
             self.preload_labels.append(labels)
             self.preload_gt_boxes.append(gt_boxes)
             self.preload_gt_class_list.append(gt_class_list)
-        print(count, mi, ccx)
+            self.filenames_list.append(filename)
+            proposals = self.get_proposals(filename)
+            self.preload_proposals.append(proposals)
+            
         ####
 
     def __len__(self) -> int:
@@ -93,11 +87,7 @@ class KITTIBEV(Dataset):
         labels = self.preload_labels[index] 
         gt_boxes = self.preload_gt_boxes[index]
         gt_class_list = self.preload_gt_class_list[index] # .get_labels(self.filenames_list[index])
-        # print(labels.shape, proposals.shape, gt_boxes.shape, gt_class_list.shape)
-        # print(len(self.preload_proposals),
-        #       len(self.preload_labels),
-        #       len(self.preload_gt_boxes),
-        #       len(self.preload_gt_class_list))
+      
         return {'bev': torch.from_numpy(bev),
                 'labels': torch.from_numpy(labels),
                 'gt_boxes': torch.from_numpy(gt_boxes),
@@ -121,7 +111,7 @@ class KITTIBEV(Dataset):
 
         rand_values = np.random.uniform(low=1., high=2.5, size=(3))
         total_boxes = np.zeros((0, 4))
-        for rand_value in rand_values:
+        for rand_value in [1, 1.2, 1.5, 3.2]:
             #####
             augment_distance = (pcl_boxes[:, 3] - pcl_boxes[:, 1]).reshape(-1, 1) * rand_value # N*1
             new_y_max = pcl_boxes[:, 1].reshape(-1, 1) + augment_distance
@@ -129,11 +119,14 @@ class KITTIBEV(Dataset):
             #####
 
             #####
-            augment_distance = (pcl_boxes[:, 2] - pcl_boxes[:, 0]).reshape(-1, 1) * rand_value/2 # N*1
+            if rand_value == 3.2:
+                augment_distance = (pcl_boxes[:, 2] - pcl_boxes[:, 0]).reshape(-1, 1) * rand_value/4
+            else:
+                 augment_distance = (pcl_boxes[:, 2] - pcl_boxes[:, 0]).reshape(-1, 1) * rand_value/2 # N*1
             new_x_max = pcl_boxes[:, 0].reshape(-1, 1) + augment_distance
-            new_x_max = np.where(new_x_max[:, 0] >= 40, 39.9, new_x_max[:, 0])
+            new_x_max = np.where(new_x_max[:, 0] >= 400, 399, new_x_max[:, 0])
             new_x_min = pcl_boxes[:, 0].reshape(-1, 1) - augment_distance
-            new_x_min = np.where(new_x_min[:, 0] < -40, -40, new_x_min[:, 0])
+            new_x_min = np.where(new_x_min[:, 0] < -400, -400, new_x_min[:, 0])
             #####
             
             augmented_box = np.concatenate([new_x_min.reshape(-1, 1),
@@ -210,6 +203,7 @@ class KITTIBEV(Dataset):
         return combined_augmented_boxes_2d
     
     def lidar_preprocess(self, scan):
+        
         velo = scan
         velo_processed = np.zeros(self.geometry['input_shape'], dtype=np.float32)
         intensity_map_count = np.zeros((velo_processed.shape[0], velo_processed.shape[1]))
@@ -249,8 +243,13 @@ class KITTIBEV(Dataset):
                 x = line.split(" ")
                 if x[0] == 'DontCare':
                     continue
-                label[self.class_to_int[x[0]]] = 1
-                gt_class_list.append(self.class_to_int[x[0]])
+                elif x[0] == 'Car':
+                    label[0] = 1
+                    gt_class_list.append(0)
+                else:
+                    label[1] = 1
+                    gt_class_list.append(1)
+                
                 curr_box_labels = [float(x[i]) for i in range(8, 15)]
                 gt_box_curr = self.get_gt_bbox(curr_box_labels)
 
@@ -264,8 +263,8 @@ class KITTIBEV(Dataset):
                 gt_box_curr[0, 0] = np.where(gt_box_curr[0, 0] <= 200, 200, gt_box_curr[0, 0])
                 gt_box_curr[0, 2] = np.where(gt_box_curr[0, 2] >= 600, 599, gt_box_curr[0, 2]) 
                 ######
-                if gt_box_curr[0, 0] < 200 or gt_box_curr[0, 2] >= 600:
-                    print(gt_box_curr[0, 0], gt_box_curr[0, 2], gt_box_curr[0, 3])
+                # if gt_box_curr[0, 0] < 200 or gt_box_curr[0, 2] >= 600:
+                #     print(gt_box_curr[0, 0], gt_box_curr[0, 2], gt_box_curr[0, 3])
 
                 gt_boxes = np.concatenate([gt_boxes, gt_box_curr], axis=0)
         return label, gt_boxes, np.asarray(gt_class_list).reshape(-1)
@@ -328,12 +327,11 @@ class KITTIBEV(Dataset):
             c_data = ctypes.c_void_p(scan.ctypes.data)
             self.LidarLib.createTopViewMaps(c_data, c_name)
             #scan = np.fromfile(filename, dtype=np.float32).reshape(-1, 4)
-            
         return scan
 
 if __name__ == "__main__":
-    valid_data_list_filename = "valid_filenames.txt"
-    lidar_folder_name = "/media/akshay/Data/KITTI/"
+    valid_data_list_filename = "./valid_data_list_after_threshold.txt"
+    lidar_folder_name = "./data"
     dataset = KITTIBEV(valid_data_list_filename=valid_data_list_filename, 
                        lidar_folder_name=lidar_folder_name)
     dataset[10]

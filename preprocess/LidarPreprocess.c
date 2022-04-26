@@ -21,9 +21,9 @@ extern "C"
 {	
 
 	const float x_MIN = 0.0;
-	const float x_MAX = 70.0;
-	const float y_MIN =-40.0;
-	const float y_MAX = 40.0;
+	const float x_MAX = 35.0;
+	const float y_MIN =-20.0;
+	const float y_MAX = 20.0;
 	const float z_MIN = -2.5; // -0.4	////TODO : to be determined ....
 	const float z_MAX = 1; // 2
 	const float x_DIVISION = 0.1;

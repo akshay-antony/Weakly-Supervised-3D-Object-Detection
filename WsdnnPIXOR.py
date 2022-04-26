@@ -18,10 +18,10 @@ geometry = {
 
 class WSDDNPIXOR(nn.Module):
     def __init__(self, 
-                roi_size=(8, 8)):
+                roi_size=(6, 6)):
         super(WSDDNPIXOR, self).__init__()
         self.roi_size = roi_size
-        self.n_classes = 8
+        self.n_classes = 2
         self.backbone = BackBone(Bottleneck, 
                                 [3, 6, 6, 3], 
                                 geometry, 

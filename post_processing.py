@@ -22,10 +22,10 @@ def iou(box1, box2):
     return iou
 
 
-def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5, inv_class=None):
+def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5, inv_class=None, total_cls_num=2):
     AP = []
     class_wise_correct_found = np.zeros((8))
-    for class_num in range(8):
+    for class_num in range(total_cls_num):
         # valid_gt_boxes = torch.zeros((0, 6))
         # valid_pred_boxes = torch.zeros((0, 7))
 

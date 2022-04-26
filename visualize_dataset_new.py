@@ -59,7 +59,7 @@ def plot_proposals_gt(gt, proposal, pc_feature):
     intensity = intensity.astype(np.uint8)*255
 
     fig, ax = plt.subplots()
-    #ax.imshow(intensity)
+    ax.imshow(intensity)
 
     # plotting gt boxes
     for i in range(gt.shape[0]):
@@ -85,11 +85,11 @@ def plot_proposals_gt(gt, proposal, pc_feature):
         rect = patches.Rectangle(corner, width, height, linewidth=1, edgecolor='b', facecolor='none')
         ax.add_patch(rect)
     
-    plt.show()
-    # plt.savefig("temp.png")
-    # output = Image.open("temp.png")
+    #ax.show()
+    plt.savefig("temp.png")
+    output = Image.open("temp.png")
 
-    # plt.show()
+    plt.show()
     return output
 
 def plot_bev(pc_feature):

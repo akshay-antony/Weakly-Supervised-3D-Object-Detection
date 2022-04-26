@@ -111,7 +111,7 @@ class BackBone(nn.Module):
         # Top-down layers
         self.deconv1 = nn.ConvTranspose2d(196, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
         p = 0 if geom['label_shape'][1] == 175 else 1
-        self.deconv2 = nn.ConvTranspose2d(128, 96, kernel_size=3, stride=2, padding=1, output_padding=(1, p))
+        self.deconv2 = nn.ConvTranspose2d(128, 96, kernel_size=3, stride=2, padding=1, output_padding=(1, 1))
 
     def forward(self, x):
         x = self.conv1(x)
