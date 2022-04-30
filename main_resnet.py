@@ -180,7 +180,7 @@ def validate(test_loader,
 
 
 if __name__ == '__main__':
-    valid_data_list_filename = "./valid_data_list_after_threshold.txt"
+    valid_data_list_filename = "./valid_full_list.txt"
     lidar_folder_name = "/media/akshay/Data/KITTI/"
     dataset = KITTICam(valid_data_list_filename=valid_data_list_filename, 
                             lidar_folder_name=lidar_folder_name)
