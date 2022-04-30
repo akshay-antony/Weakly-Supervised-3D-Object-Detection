@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
-from WsdnnPIXOR import WSDDNPIXOR
-from dataset import KITTIBEV
+from WSDNN_Resnet import  WSDNN_Resnet
+from dataset import KITTICam
 from torch.utils.data import random_split
 from torch.utils.data import DataLoader
 from torchvision.ops import nms
@@ -17,17 +17,6 @@ import sklearn.metrics
 from visualize_dataset_new import plot_bev
 from loss import FocalLoss
 import torch.nn.functional as F
-
-def load_pretrained(model, filename='40epoch'):
-    own_state = model.state_dict()
-    state_dict = torch.load(filename)
-    for name, param in state_dict.items():
-        if name not in own_state:
-                continue
-        if isinstance(param, nn.Parameter):
-            # backwards compatibility for serialized parameters
-            param = param.data
-        own_state[name].copy_(param)
 
 def train(train_loader, 
           model, 
@@ -44,7 +33,7 @@ def train(train_loader,
                            total=len(train_loader),
                            leave=False):
         model = model.train()
-        bev = data['bev'].cuda()
+        bev = data['image'].cuda()
         labels = data['labels'].cuda()
         #gt_boxes = data['gt_boxes'].cuda()
         proposals = data['proposals'].squeeze().float().cuda()
@@ -53,9 +42,9 @@ def train(train_loader,
         #with torch.cuda.amp.autocast():
         preds = model(bev, proposals)
         preds_class = preds.sum(dim=0).reshape(1, -1)
-        preds_class_sigmoid = torch.sigmoid(preds_class)
-        total_preds = torch.cat([total_preds, preds_class_sigmoid], dim=0)
-        total_target = torch.cat([total_target, labels], dim=0)
+        # preds_class_sigmoid = torch.sigmoid(preds_class)
+        # total_preds = torch.cat([total_preds, preds_class_sigmoid], dim=0)
+        # total_target = torch.cat([total_target, labels], dim=0)
         preds_class = torch.clamp(preds_class, 0, 1)
         loss = loss_fn(preds_class, labels)
 
@@ -69,9 +58,9 @@ def train(train_loader,
         loss_total += loss.item() * bev.shape[0]
         data_count += bev.shape[0]
         if iter%500 == 0 and iter != 0:
-            map_class = map_classification(total_preds, total_target)
+            #map_class = map_classification(total_preds, total_target)
             wandb.log({"Loss":loss_total / data_count})
-            print("Focal Loss: ", loss_total / data_count, " BCE loss: ", loss_bce_total / data_count,  " mAP: ", map_class)
+            print("Focal Loss: ", loss_total / data_count) #, " BCE loss: ", loss_bce_total / data_count) #,  " mAP: ", map_class)
         # if iter%5000 == 0 and iter != 0:
         #     model.eval()
         #     validate(test_loader, model, loss_fn)
@@ -86,7 +75,7 @@ def validate(test_loader,
              inv_class=None,
              direct_class=None):
     np.random.seed(2)
-    num_classes = 2
+    num_classes = 1
     loss_total = 0.0
     data_count = 0.0
     all_gt_boxes = torch.zeros((0, 6))
@@ -99,7 +88,7 @@ def validate(test_loader,
                             leave=False):
             plotting_proposals = torch.zeros((0, 5))
             plotting_gts = torch.zeros((0, 5))
-            bev = data['bev'].cuda()
+            bev = data['image'].cuda()
             labels = data['labels'].cuda()
             gt_boxes = data['gt_boxes'].reshape(-1, 4) #.cuda()
             proposals = data['proposals'].squeeze().float().cuda()
@@ -143,10 +132,10 @@ def validate(test_loader,
 
                 for idx in range(plotting_proposals.shape[0]):
                     box_data = {"position": {
-                        "minX": plotting_proposals[idx, 1].item() / 350,
-                        "minY": plotting_proposals[idx, 0].item() / 400,
-                        "maxX": plotting_proposals[idx, 3].item() / 350,
-                        "maxY": plotting_proposals[idx, 2].item() / 400},
+                        "minX": plotting_proposals[idx, 0].item() / 1224,
+                        "minY": plotting_proposals[idx, 1].item() / 370,
+                        "maxX": plotting_proposals[idx, 2].item() / 1224,
+                        "maxY": plotting_proposals[idx, 3].item() / 370},
                         "class_id": int(plotting_proposals[idx, 4].item()),
                         "box_caption": inv_class[int(plotting_proposals[idx][4])],
                         }
@@ -155,10 +144,10 @@ def validate(test_loader,
 
                 for idx in range(plotting_gts.shape[0]):
                     box_data_new = {"position": {
-                        "minX": plotting_gts[idx, 2].item() / 350,
-                        "minY": plotting_gts[idx, 1].item() / 400,
-                        "maxX": plotting_gts[idx, 4].item() / 350,
-                        "maxY": plotting_gts[idx, 3].item() / 400},
+                        "minX": plotting_gts[idx, 1].item() / 1224,
+                        "minY": plotting_gts[idx, 2].item() / 370,
+                        "maxX": plotting_gts[idx, 3].item() / 1124,
+                        "maxY": plotting_gts[idx, 4].item() / 370},
                         "class_id": int(plotting_gts[idx, 0].item()),
                         "box_caption": inv_class[int(plotting_gts[idx][0])],
                         }
@@ -189,34 +178,17 @@ def validate(test_loader,
         print("Iou ", iou, " mAP ", mAP)
     return mAP
 
-def map_classification(output, target):
-    target = target.detach().cpu().numpy()
-    output = output.detach().cpu().numpy()
-    num_classes = target.shape[1]
-    ap = []
-    for class_id in range(num_classes):
-        output_req = output[:, class_id].astype('float32')
-        target_req = target[:, class_id].astype('float32')
-        output_req = output_req - 1e-5*target_req
-        if np.sum(target_req) == 0:
-            #ap.append(0)    
-            continue
-        curr_ap = sklearn.metrics.average_precision_score(target_req, output_req, average=None)
-        if not math.isnan(curr_ap):
-            ap.append(curr_ap)
-    return sum(ap) / (len(ap) if len(ap) > 0 else 1)
 
 if __name__ == '__main__':
     valid_data_list_filename = "./valid_data_list_after_threshold.txt"
     lidar_folder_name = "/media/akshay/Data/KITTI/"
-    dataset = KITTIBEV(valid_data_list_filename=valid_data_list_filename, 
+    dataset = KITTICam(valid_data_list_filename=valid_data_list_filename, 
                             lidar_folder_name=lidar_folder_name)
-    wandb.init("WSDNNPIXOR")
+    wandb.init("WSDNNResnet")
     epochs = 10
-    model = WSDDNPIXOR()
-    load_pretrained(model)
+    model = WSDNN_Resnet()
 
-    for params in model.backbone.parameters():
+    for params in model.encoder.parameters():
         params.requires_grad = False
 
     train_dataset_length = int(0.70 * len(dataset))
@@ -228,8 +200,8 @@ if __name__ == '__main__':
     print(len(train_dataset), len(test_dataset))
 
     #scaler = torch.cuda.amp.GradScaler()
-    #loss_fn = nn.BCEWithLogitsLoss(reduction='sum')
-    loss_fn = FocalLoss(alpha=0.25, gamma=2)
+    loss_fn = nn.BCEWithLogitsLoss(reduction='sum')
+    #loss_fn = FocalLoss(alpha=0.25, gamma=2)
     model = model.cuda()
     #optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0001)
@@ -244,8 +216,8 @@ if __name__ == '__main__':
         model = model.train()
         loss = train(train_loader, model, loss_fn, optimizer, test_loader)
         print("Epoch average Loss: ", loss)
-        torch.save(model.state_dict(), "model.pth")
-        torch.save(optimizer.state_dict(), "opt.pth")
+        torch.save(model.state_dict(), "model_res.pth")
+        torch.save(optimizer.state_dict(), "opt_res.pth")
         if i%1 == 0:
             model = model.eval()
             mAP = validate(test_loader, 

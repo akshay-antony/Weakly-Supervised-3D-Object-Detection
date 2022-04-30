@@ -7,6 +7,9 @@ import os
 from dataprocess import load_bbox, filter_boxes
 import ctypes
 from tqdm import tqdm
+from image_2d_box import get_pixel_coordinates
+from PIL import Image
+from torchvision import transforms
 
 class KITTIBEV(Dataset):
     def __init__(self, 
@@ -75,8 +78,9 @@ class KITTIBEV(Dataset):
             proposals = self.get_proposals(filename)
             assert(gt_class_list.shape[0] == gt_class_list.shape[0])
             assert np.min(proposals[:, 0]) >= 0, "x_min"
-            assert np.max(proposals[:, 2]) < 401, "x_max"
+            assert np.max(proposals[:, 2]) < 400, "x_max"
             assert np.max(proposals[:, 3]) < 350, "y_max"
+            assert np.min(proposals[:, 1]) >= 0
             self.preload_proposals.append(proposals)
             prop_max = max(prop_max, proposals.shape[0])
             prop_min = min(prop_min, proposals.shape[0])
@@ -340,6 +344,104 @@ class KITTIBEV(Dataset):
             self.LidarLib.createTopViewMaps(c_data, c_name)
             #scan = np.fromfile(filename, dtype=np.float32).reshape(-1, 4)
         return scan
+
+class KITTICam(Dataset):
+    def __init__(self, 
+                is_train=True,
+                lidar_folder_name=None,
+                label_folder_name=None,
+                valid_data_list_filename=None):
+        self.x_min = -25
+        self.x_max = 25
+        self.y_min = 0
+        self.y_max = 35
+
+        self.class_names = ['Car']
+        self.num_classes = len(self.class_names)
+        self.lidar_folder_name = lidar_folder_name
+        self.label_folder_name = label_folder_name
+        self.is_train = is_train
+        if self.is_train:
+            self.sub_folder = 'training'
+        filenames_list = []
+
+        with open(valid_data_list_filename, "r") as f: 
+            for line in f.readlines():
+                line = line.split("\n")[0]
+                filenames_list.append(line)
+        
+        self.inv_class = {i: class_name for i, class_name in enumerate(self.class_names)}
+        self.class_to_int = {class_name: i for i, class_name in enumerate(self.class_names)}
+
+        ####
+        self.preload_proposals = []
+        self.preload_labels = []
+        self.preload_gt_boxes = []
+        self.preload_gt_class_list = []
+        self.filenames_list = []
+
+        print("Preloading Data")
+        for filename in tqdm(filenames_list,
+                            total=len(filenames_list),
+                            leave=False):
+            proposals, gt_boxes = get_pixel_coordinates(filename)
+            # if gt_boxes.shape[0] == 0:
+            #     filenames_list.remove(filename)
+            #     ccx += 1
+            #     continue
+            #
+            label = np.zeros((self.num_classes, ))
+            label[0] = 1 if gt_boxes.shape[0] != 0 else 0
+            gt_class_list = np.zeros((gt_boxes.shape[0], ))
+            self.preload_labels.append(label)
+            self.preload_gt_boxes.append(gt_boxes)
+            self.preload_gt_class_list.append(gt_class_list)
+            self.filenames_list.append(filename)
+
+            # assert(gt_class_list.shape[0] == gt_class_list.shape[0])
+            # assert np.min(proposals[:, 0]) >= 0, "x_min"
+            # assert np.max(proposals[:, 2]) < 400, "x_max"
+            # assert np.max(proposals[:, 3]) < 350, "y_max"
+            # assert np.min(proposals[:, 1]) >= 0
+            
+            self.preload_proposals.append(proposals)
+        ####
+    def __len__(self) -> int:
+        return len(self.filenames_list)
+
+    def __getitem__(self, index: int):
+        image_path = os.path.join(self.lidar_folder_name, 
+                                self.sub_folder,
+                                "image_2",
+                                self.filenames_list[index] + ".png") 
+        image = Image.open(image_path)
+        image = transforms.ToTensor()(image)
+        image = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])(image)
+        labels = self.preload_labels[index]
+        gt_boxes = self.preload_gt_boxes[index]
+        proposals = self.preload_proposals[index]
+        gt_class_list = self.preload_gt_class_list[index]
+
+        return {'image': torch.from_numpy(image),
+                'labels': torch.from_numpy(labels),
+                'gt_boxes': torch.from_numpy(gt_boxes),
+                'proposals': torch.from_numpy(proposals),
+                'gt_class_list': torch.from_numpy(gt_class_list)}
+
+    def get_label(self, filename):
+        label = np.zeros((self.num_classes,))
+        gt_class_list = []
+        label_filename = os.path.join(self.lidar_folder_name,
+                                      self.sub_folder,
+                                      "label_2", 
+                                      filename + ".txt")
+        with open(label_filename, "r") as f:
+            for line in f.readlines():
+                x = line.split(" ")
+                if x[0] == 'Car':
+                    label[0] = 1
+                    gt_class_list.append(0)
+        return label, gt_class_list
 
 if __name__ == "__main__":
     valid_data_list_filename = "./valid_data_list_after_threshold.txt"

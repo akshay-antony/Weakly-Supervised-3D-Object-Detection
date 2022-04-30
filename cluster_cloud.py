@@ -5,7 +5,7 @@ import os
 import struct
 import sys
 import matplotlib.pyplot as plt
-
+from tqdm import tqdm
 
 def bin_to_pcd(binFileName):
     size_float = 4
@@ -25,6 +25,20 @@ def remove_rear_cloud(pcd):
     pcd_np = np.asarray(pcd.points)
     indices = np.where(pcd_np[:, 0] >= 0)
     infront_cloud = pcd.select_by_index(indices[0])
+
+    ###
+    indices = np.where(np.asarray(infront_cloud.points)[:, 0] <= 35)
+    infront_cloud = infront_cloud.select_by_index(indices[0])
+    ####
+    ###
+    indices = np.where(np.asarray(infront_cloud.points)[:, 1] <= 25)
+    infront_cloud = infront_cloud.select_by_index(indices[0])
+    ####
+    ###
+    indices = np.where(np.asarray(infront_cloud.points)[:, 1] >= -25)
+    infront_cloud = infront_cloud.select_by_index(indices[0])
+    ####
+
     return infront_cloud
 
 def segment_ground_plane(pcd, 
@@ -45,15 +59,15 @@ def segment_ground_plane(pcd,
     return outlier_cloud
 
 def dbscan_cluster(pcd,
-                   eps=0.20,
-                   min_points=10):
+                   eps=0.9,
+                   min_points=30):
     # with o3d.utility.VerbosityContextManager(
     #         o3d.utility.VerbosityLevel.Debug) as cm:
     labels = np.array(
         pcd.cluster_dbscan(eps=eps, min_points=min_points, print_progress=True))
 
     max_label = labels.max()
-    print(f"point cloud has {max_label + 1} clusters")
+    print(f'point cloud has { max_label + 1 } clusters')
     # colors = plt.get_cmap("tab20")(labels / (max_label if max_label > 0 else 1))
     # colors[labels == -1] = 0
     # pcd.colors = o3d.utility.Vector3dVector(colors[:, :3])
@@ -75,7 +89,7 @@ def get_min_max_box(points):
     #return np.asarray([[x_min, y]])
 
 def get_bbox(pcd, labels, label_max, filename, folder_name, write=False):
-    filename = folder_name + "/bbox/" +  filename.split('.')[0] + ".txt"
+    filename = folder_name + "/bbox_open3d/" +  filename.split('.')[0] + ".txt"
     lis = [pcd]
     for i in range(label_max-1):
         idx = np.where(labels == i)[0]
@@ -102,13 +116,13 @@ def get_bbox(pcd, labels, label_max, filename, folder_name, write=False):
 def load_bin_folder(folder_name):
     count = 0
     total = 0
-    for f in os.listdir(folder_name):
+    for f in tqdm(os.listdir(folder_name)):
         filename = os.path.join(folder_name, f)
         pcd = bin_to_pcd(filename)
-        cd = remove_rear_cloud(pcd)
+        pcd = remove_rear_cloud(pcd)
         pcd_without_ground = segment_ground_plane(pcd)
         label_max, labels = dbscan_cluster(pcd_without_ground)
-        get_bbox(pcd_without_ground, labels, label_max, f, "/media/akshay/Data/KITTI/testing", True)
+        get_bbox(pcd_without_ground, labels, label_max, f, "/media/akshay/Data/KITTI/training", True)
         #print(label_max)
         total += 1 
         if label_max <= 50:
@@ -117,7 +131,7 @@ def load_bin_folder(folder_name):
     print("count ", count, "total ", total)
 
 if __name__ == '__main__':
-    load_bin_folder("/media/akshay/Data/KITTI/testing/velodyne")
+    load_bin_folder("/media/akshay/Data/KITTI/training/velodyne")
     # vis = o3d.visualization.Visualizer()
     # vis.create_window()
     # filename = "Samples_kitti/Samples_kitti/000000.bin"
