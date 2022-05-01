@@ -11,6 +11,10 @@ class WSDNN_Resnet(nn.Module):
         self.num_class = 1
         resnet = torchvision.models.resnet152(pretrained=True)
         self.encoder = torch.nn.Sequential(*(list(resnet.children())[:-2]))
+
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+
         self.roi_pool = torchvision.ops.roi_pool
         self.classifier = nn.Sequential(
                         nn.Linear(2048*self.roi_size[0]*self.roi_size[1], 4096), 
