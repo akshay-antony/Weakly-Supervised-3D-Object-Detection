@@ -384,12 +384,9 @@ class KITTICam(Dataset):
         for filename in tqdm(filenames_list,
                             total=len(filenames_list),
                             leave=False):
-            proposals, gt_boxes = get_pixel_coordinates(filename)
-            # if gt_boxes.shape[0] == 0:
-            #     filenames_list.remove(filename)
-            #     ccx += 1
-            #     continue
-            #
+            proposals, gt_boxes = get_pixel_coordinates(filename, lidar_folder_name)
+            if proposals.shape[0] == 0:
+                continue
             label = np.zeros((self.num_classes, ))
             label[0] = 1 if gt_boxes.shape[0] != 0 else 0
             gt_class_list = np.zeros((gt_boxes.shape[0], ))
@@ -410,7 +407,9 @@ class KITTICam(Dataset):
         return len(self.filenames_list)
 
     def __getitem__(self, index: int):
+        #print(index)
         image_path = os.path.join(self.lidar_folder_name, 
+                                "KITTI",
                                 self.sub_folder,
                                 "image_2",
                                 self.filenames_list[index] + ".png") 
@@ -422,7 +421,7 @@ class KITTICam(Dataset):
         proposals = self.preload_proposals[index]
         gt_class_list = self.preload_gt_class_list[index]
 
-        return {'image': torch.from_numpy(image),
+        return {'image': image,
                 'labels': torch.from_numpy(labels),
                 'gt_boxes': torch.from_numpy(gt_boxes),
                 'proposals': torch.from_numpy(proposals),

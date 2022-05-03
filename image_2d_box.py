@@ -266,7 +266,7 @@ def get_pixel_coordinates(filename, basefilename="/media/akshay/Data/"):
     R0 = np.reshape(R0, [3,3])
 
     gt_boxes = np.array(get_2D_gt_boxes(basefilename + "KITTI/training/label_2/{}.txt".format(filename)))
-    gt_velo_boxes = get_velo_from_cam(filename).reshape(-1, 6)
+    gt_velo_boxes = get_velo_from_cam(filename, basefilename).reshape(-1, 6)
     gt_boxes = refine_gt_boxes(gt_boxes, gt_velo_boxes)
 
     boxes1 = np.array(read_proposals(basefilename + "KITTI/training/bbox_pcl/{}.txt".format(filename), P, V2C, R0))

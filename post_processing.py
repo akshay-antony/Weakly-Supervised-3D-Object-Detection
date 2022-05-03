@@ -55,9 +55,9 @@ def calculate_ap(pred_boxes, gt_boxes, iou_threshold=0.5, inv_class=None, total_
 
             best_iou = 0
             for j in range(curr_valid_gt_boxes.shape[0]):
-                #curr_iou = iou(curr_valid_gt_boxes[j, 2:].reshape(-1), valid_pred_boxes[i, 3:].reshape(-1))
-                curr_iou = torchvision.ops.box_iou(curr_valid_gt_boxes[j, 2:].reshape(-1, 4), 
-                                                  valid_pred_boxes[i, 3:].reshape(-1, 4))
+                curr_iou = iou(curr_valid_gt_boxes[j, 2:].reshape(-1), valid_pred_boxes[i, 3:].reshape(-1))
+                # curr_iou = torchvision.ops.box_iou(curr_valid_gt_boxes[j, 2:].reshape(-1, 4), 
+                #                                    valid_pred_boxes[i, 3:].reshape(-1, 4))
                 if curr_iou > best_iou:
                     best_iou = curr_iou
                     best_gt_idx = j 

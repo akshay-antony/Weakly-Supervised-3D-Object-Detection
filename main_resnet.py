@@ -69,9 +69,9 @@ def train(train_loader,
 def validate(test_loader, 
              model, 
              loss_fn, 
-             score_threshold=0.005,
+             score_threshold=0.05,
              nms_iou_threshold=0.5,
-             iou_list = [0.05, 0.1, 0.2, 0.3, 0.4],
+             iou_list = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
              inv_class=None,
              direct_class=None):
     np.random.seed(2)
@@ -108,9 +108,11 @@ def validate(test_loader,
 
             for class_num in range(num_classes):
                 curr_class_scores = cls_probs[:, class_num]
+                #score_threshold = 1 / cls_probs.shape[0]
                 valid_score_idx = torch.where(curr_class_scores >= score_threshold)
                 valid_scores = curr_class_scores[valid_score_idx]
-                valid_proposals = proposals[valid_score_idx]
+                valid_proposals = proposals[valid_score_idx[0], :]
+                #print(valid_proposals.shape, valid_scores.shape, proposals.shape)
                 retained_idx = nms(valid_proposals, valid_scores, nms_iou_threshold)
                 retained_scores = valid_scores[retained_idx]
                 retained_proposals = valid_proposals[retained_idx]
@@ -181,15 +183,12 @@ def validate(test_loader,
 
 if __name__ == '__main__':
     valid_data_list_filename = "./valid_full_list.txt"
-    lidar_folder_name = "/media/akshay/Data/KITTI/"
+    lidar_folder_name = "./data/"
     dataset = KITTICam(valid_data_list_filename=valid_data_list_filename, 
                             lidar_folder_name=lidar_folder_name)
     wandb.init("WSDNNResnet")
     epochs = 10
     model = WSDNN_Resnet()
-
-    for params in model.encoder.parameters():
-        params.requires_grad = False
 
     train_dataset_length = int(0.70 * len(dataset))
     train_dataset, test_dataset = random_split(dataset, [train_dataset_length,
@@ -203,8 +202,8 @@ if __name__ == '__main__':
     loss_fn = nn.BCEWithLogitsLoss(reduction='sum')
     #loss_fn = FocalLoss(alpha=0.25, gamma=2)
     model = model.cuda()
-    #optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    #optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0001)
     for i in range(epochs):
         # if i%1 == 0:
         #     model = model.eval()
