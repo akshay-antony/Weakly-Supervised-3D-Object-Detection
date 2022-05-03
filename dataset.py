@@ -350,11 +350,14 @@ class KITTICam(Dataset):
                 is_train=True,
                 lidar_folder_name=None,
                 label_folder_name=None,
-                valid_data_list_filename=None):
+                valid_data_list_filename=None,
+                req_img_size=(512, 512)):
         self.x_min = -25
         self.x_max = 25
         self.y_min = 0
         self.y_max = 35
+        self.req_img_size = req_img_size
+        self.initial_image_size = (1242, 375)
 
         self.class_names = ['Car']
         self.num_classes = len(self.class_names)
@@ -379,6 +382,9 @@ class KITTICam(Dataset):
         self.preload_gt_boxes = []
         self.preload_gt_class_list = []
         self.filenames_list = []
+        self.transforms = transforms.Compose([transforms.Resize(req_img_size),
+                                              transforms.ToTensor(),
+                                              transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
         print("Preloading Data")
         for filename in tqdm(filenames_list,
@@ -387,6 +393,18 @@ class KITTICam(Dataset):
             proposals, gt_boxes = get_pixel_coordinates(filename, lidar_folder_name)
             if proposals.shape[0] == 0:
                 continue
+            if proposals.shape[0] != 0:
+                proposals[:, 0] = proposals[:, 0] * (self.req_img_size[0] / self.initial_image_size[0])
+                proposals[:, 1] = proposals[:, 1] * (self.req_img_size[1] / self.initial_image_size[1])
+                proposals[:, 2] = proposals[:, 2] * (self.req_img_size[0] / self.initial_image_size[0])
+                proposals[:, 3] = proposals[:, 3] * (self.req_img_size[1] / self.initial_image_size[1])
+
+            if gt_boxes.shape[0] != 0:
+                gt_boxes[:, 0] = gt_boxes[:, 0] * (self.req_img_size[0] / self.initial_image_size[0])
+                gt_boxes[:, 1] = gt_boxes[:, 1] * (self.req_img_size[1] / self.initial_image_size[1])
+                gt_boxes[:, 2] = gt_boxes[:, 2] * (self.req_img_size[0] / self.initial_image_size[0])
+                gt_boxes[:, 3] = gt_boxes[:, 3] * (self.req_img_size[1] / self.initial_image_size[1])
+
             label = np.zeros((self.num_classes, ))
             label[0] = 1 if gt_boxes.shape[0] != 0 else 0
             gt_class_list = np.zeros((gt_boxes.shape[0], ))
@@ -395,12 +413,6 @@ class KITTICam(Dataset):
             self.preload_gt_class_list.append(gt_class_list)
             self.filenames_list.append(filename)
 
-            # assert(gt_class_list.shape[0] == gt_class_list.shape[0])
-            # assert np.min(proposals[:, 0]) >= 0, "x_min"
-            # assert np.max(proposals[:, 2]) < 400, "x_max"
-            # assert np.max(proposals[:, 3]) < 350, "y_max"
-            # assert np.min(proposals[:, 1]) >= 0
-            
             self.preload_proposals.append(proposals)
         ####
     def __len__(self) -> int:
@@ -414,8 +426,7 @@ class KITTICam(Dataset):
                                 "image_2",
                                 self.filenames_list[index] + ".png") 
         image = Image.open(image_path)
-        image = transforms.ToTensor()(image)
-        image = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])(image)
+        image = self.transforms(image)
         labels = self.preload_labels[index]
         gt_boxes = self.preload_gt_boxes[index]
         proposals = self.preload_proposals[index]

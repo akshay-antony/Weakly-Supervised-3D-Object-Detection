@@ -404,14 +404,32 @@ if __name__ == '__main__':
               "Proposals miny", np.min(proposals[:, 1]),
               "Proposals maxx", np.max(proposals[:, 2]),
               "Proposals maxy", np.max(proposals[:, 3]))
-        image = read_image("/media/akshay/Data/" + "KITTI/training/image_2/{}.png".format(filename))
+        image_org = read_image("/media/akshay/Data/" + "KITTI/training/image_2/{}.png".format(filename))
+        image_test = Image.open("/media/akshay/Data/" + "KITTI/training/image_2/{}.png".format(filename))
+        
+        image = cv2.resize(image_org, (512, 512))
         count += 1 if gt_boxes.shape[0] == 0 else 0    
         no_count += 1 if gt_boxes.shape[0] != 0 else 0
+        print(image_org.shape)
+        if proposals.shape[0] != 0:
+            proposals[:, 0] = proposals[:, 0] * (512 / image_test.size[0])
+            proposals[:, 1] = proposals[:, 1] * (512 / image_test.size[1])
+            proposals[:, 2] = proposals[:, 2] * (512 / image_test.size[0])
+            proposals[:, 3] = proposals[:, 3] * (512 / image_test.size[1])
+
+        if gt_boxes.shape[0] != 0:
+            gt_boxes[:, 0] = gt_boxes[:, 0] * (512 / image_test.size[0])
+            gt_boxes[:, 1] = gt_boxes[:, 1] * (512 / image_test.size[1])
+            gt_boxes[:, 2] = gt_boxes[:, 2] * (512 / image_test.size[0])
+            gt_boxes[:, 3] = gt_boxes[:, 3] * (512 / image_test.size[1])
+
         img = plot_2d_boxes(image, proposals, color=(0,0,255))
         #img = plot_2d_boxes(img, boxes2, color=(255,0,0))
         img = plot_2d_boxes(image, gt_boxes, color=(0,255,0))
 
         cv2.imshow("image_{}".format(0), img)
+        print(image_org.shape)
+        print(image_test.size)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
     print("Zero gt ", count, "Non count ", no_count)
