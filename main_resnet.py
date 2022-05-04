@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
-from WSDNN_Resnet import  WSDNN_Resnet
+from WSDNN_Resnet import  WSDNN_Resnet, WSDNN_Alexnet
 from dataset import KITTICam
 from torch.utils.data import random_split
 from torch.utils.data import DataLoader
@@ -17,6 +17,24 @@ import sklearn.metrics
 from visualize_dataset_new import plot_bev
 from loss import FocalLoss
 import torch.nn.functional as F
+from torchvision import transforms
+
+
+def tensor_to_PIL(image):
+    """
+    converts a tensor normalized image (imagenet mean & std) into a PIL RGB image
+    will not work with batches (if batch size is 1, squeeze before using this)
+    """
+    inv_normalize = transforms.Normalize(
+        mean=[-0.485/0.229, -0.456/0.224, -0.406/0.255],
+        std=[1/0.229, 1/0.224, 1/0.255],
+    )
+
+    inv_tensor = inv_normalize(image)
+    inv_tensor = torch.clamp(inv_tensor, 0, 1)
+    original_image = transforms.ToPILImage()(inv_tensor).convert("RGB")
+
+    return original_image
 
 def train(train_loader, 
           model, 
@@ -34,7 +52,7 @@ def train(train_loader,
                            leave=False):
         model = model.train()
         bev = data['image'].cuda()
-        labels = data['labels'].cuda()
+        labels = data['labels'].float().cuda()
         #gt_boxes = data['gt_boxes'].cuda()
         proposals = data['proposals'].squeeze().float().cuda()
         proposals = torch.cuda.FloatTensor(proposals)
@@ -42,12 +60,16 @@ def train(train_loader,
         #with torch.cuda.amp.autocast():
         preds = model(bev, proposals)
         preds_class = preds.sum(dim=0).reshape(1, -1)
+        #print(preds_class, labels)
         # preds_class_sigmoid = torch.sigmoid(preds_class)
         # total_preds = torch.cat([total_preds, preds_class_sigmoid], dim=0)
         # total_target = torch.cat([total_target, labels], dim=0)
         preds_class = torch.clamp(preds_class, 0, 1)
+        #print(labels.shape, preds_class.shape, type(labels), type(preds_class))
         loss = loss_fn(preds_class, labels)
-
+        
+        bce_funtion = torch.nn.BCELoss(reduction='sum')
+        #loss_bce_total += bce_funtion(preds_class, labels).item()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -60,20 +82,24 @@ def train(train_loader,
         if iter%500 == 0 and iter != 0:
             #map_class = map_classification(total_preds, total_target)
             wandb.log({"Loss":loss_total / data_count})
-            print("Focal Loss: ", loss_total / data_count) #, " BCE loss: ", loss_bce_total / data_count) #,  " mAP: ", map_class)
+            print("Loss: ", loss_total / data_count , " BCE loss: ", loss_bce_total / data_count) #,  " mAP: ", map_class)
+            # loss_total = 0
+            # data_count = 0
+            # loss_bce_total = 0
         # if iter%5000 == 0 and iter != 0:
         #     model.eval()
         #     validate(test_loader, model, loss_fn)
-    return loss_total / data_count
+    return loss_bce_total / data_count
 
 def validate(test_loader, 
              model, 
              loss_fn, 
-             score_threshold=0.05,
+             score_threshold=0.5,
              nms_iou_threshold=0.5,
              iou_list = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
              inv_class=None,
-             direct_class=None):
+             direct_class=None,
+             dataset=None):
     np.random.seed(2)
     num_classes = 1
     loss_total = 0.0
@@ -89,15 +115,15 @@ def validate(test_loader,
             plotting_proposals = torch.zeros((0, 5))
             plotting_gts = torch.zeros((0, 5))
             bev = data['image'].cuda()
-            labels = data['labels'].cuda()
+            labels = data['labels'].float().cuda()
             gt_boxes = data['gt_boxes'].reshape(-1, 4) #.cuda()
             proposals = data['proposals'].squeeze().float().cuda()
             gt_class_list = data['gt_class_list'].reshape(-1) #.cuda()
 
             cls_probs = model(bev, proposals)
-            preds_class = cls_probs.sum(dim=0).reshape(1, -1)
-            loss = loss_fn(preds_class, labels)
-            loss_total += loss.item()
+            #preds_class = cls_probs.sum(dim=0).reshape(1, -1)
+            # loss = loss_fn(preds_class, labels)
+            # loss_total += loss.item()
             data_count += bev.shape[0]
 
             for i in range(gt_boxes.shape[0]):
@@ -108,6 +134,9 @@ def validate(test_loader,
 
             for class_num in range(num_classes):
                 curr_class_scores = cls_probs[:, class_num]
+                ####
+                #curr_class_scores = torch.sigmoid(curr_class_scores)
+                ###
                 #score_threshold = 1 / cls_probs.shape[0]
                 valid_score_idx = torch.where(curr_class_scores >= score_threshold)
                 valid_scores = curr_class_scores[valid_score_idx]
@@ -130,14 +159,14 @@ def validate(test_loader,
             if iter in plotting_idxs:
                 all_boxes = []
                 all_gt_plotting_boxes = []
-                raw_image = plot_bev(bev[0].detach().cpu())
+                raw_image = tensor_to_PIL(bev[0].detach().cpu())
 
                 for idx in range(plotting_proposals.shape[0]):
                     box_data = {"position": {
-                        "minX": plotting_proposals[idx, 0].item() / 1224,
-                        "minY": plotting_proposals[idx, 1].item() / 370,
-                        "maxX": plotting_proposals[idx, 2].item() / 1224,
-                        "maxY": plotting_proposals[idx, 3].item() / 370},
+                        "minX": plotting_proposals[idx, 0].item() / dataset.req_img_size[0],
+                        "minY": plotting_proposals[idx, 1].item() / dataset.req_img_size[0],
+                        "maxX": plotting_proposals[idx, 2].item() / dataset.req_img_size[0],
+                        "maxY": plotting_proposals[idx, 3].item() / dataset.req_img_size[0]},
                         "class_id": int(plotting_proposals[idx, 4].item()),
                         "box_caption": inv_class[int(plotting_proposals[idx][4])],
                         }
@@ -146,10 +175,10 @@ def validate(test_loader,
 
                 for idx in range(plotting_gts.shape[0]):
                     box_data_new = {"position": {
-                        "minX": plotting_gts[idx, 1].item() / 1224,
-                        "minY": plotting_gts[idx, 2].item() / 370,
-                        "maxX": plotting_gts[idx, 3].item() / 1124,
-                        "maxY": plotting_gts[idx, 4].item() / 370},
+                        "minX": plotting_gts[idx, 1].item() / dataset.req_img_size[0],
+                        "minY": plotting_gts[idx, 2].item() / dataset.req_img_size[0],
+                        "maxX": plotting_gts[idx, 3].item() / dataset.req_img_size[0],
+                        "maxY": plotting_gts[idx, 4].item() / dataset.req_img_size[0]},
                         "class_id": int(plotting_gts[idx, 0].item()),
                         "box_caption": inv_class[int(plotting_gts[idx][0])],
                         }
@@ -163,13 +192,13 @@ def validate(test_loader,
                                         {"box_data": all_gt_plotting_boxes,
                                         "class_labels": inv_class}
                                         })
-                wandb.log({"Image proposals " + str(iter): box_image})
-                box_image = wandb.Image(raw_image, 
-                                        boxes= {"predictions":
-                                        {"box_data": all_gt_plotting_boxes,
-                                        "class_labels": inv_class}
-                                        })
-                wandb.log({"Image gt " + str(iter): box_image})
+                wandb.log({"Image proposals " + data['filename'][0]: box_image})
+                # box_image = wandb.Image(raw_image, 
+                #                         boxes= {"predictions":
+                #                         {"box_data": all_gt_plotting_boxes,
+                #                         "class_labels": inv_class}
+                #                         })
+                # wandb.log({"Image gt " + str(iter): box_image})
                 
     for iou in iou_list:
         #print(all_gt_boxes.shape, all_gt_boxes.shape)
@@ -188,22 +217,24 @@ if __name__ == '__main__':
                             lidar_folder_name=lidar_folder_name)
     wandb.init("WSDNNResnet")
     epochs = 10
-    model = WSDNN_Resnet()
+    model = WSDNN_Alexnet()
 
-    train_dataset_length = int(0.70 * len(dataset))
+    train_dataset_length = int(0.80 * len(dataset))
     train_dataset, test_dataset = random_split(dataset, [train_dataset_length,
                                                         len(dataset) - train_dataset_length],
-                                                        generator=torch.Generator().manual_seed(10))
+                                                        generator=torch.Generator().manual_seed(100))
     train_loader = DataLoader(train_dataset, batch_size=1, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
     print(len(train_dataset), len(test_dataset))
 
     #scaler = torch.cuda.amp.GradScaler()
-    loss_fn = nn.BCEWithLogitsLoss(reduction='sum')
+    loss_fn = nn.BCELoss(reduction='sum')
     #loss_fn = FocalLoss(alpha=0.25, gamma=2)
+    #loss_fn = nn.MSELoss()
     model = model.cuda()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    #optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0001)
+    #optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, momentum=0.9, weight_decay=0.0005)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.3)
     for i in range(epochs):
         # if i%1 == 0:
         #     model = model.eval()
@@ -211,7 +242,8 @@ if __name__ == '__main__':
         #                   model, 
         #                   loss_fn, 
         #                   inv_class=dataset.inv_class, 
-        #                   direct_class=dataset.class_to_int)
+        #                   direct_class=dataset.class_to_int,
+        #                   dataset=dataset)
         model = model.train()
         loss = train(train_loader, model, loss_fn, optimizer, test_loader)
         print("Epoch average Loss: ", loss)
@@ -223,4 +255,7 @@ if __name__ == '__main__':
                           model, 
                           loss_fn, 
                           inv_class=dataset.inv_class, 
-                          direct_class=dataset.class_to_int)
+                          direct_class=dataset.class_to_int,
+                          dataset=dataset)
+
+        scheduler.step()

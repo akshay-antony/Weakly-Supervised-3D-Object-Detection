@@ -405,15 +405,35 @@ class KITTICam(Dataset):
                 gt_boxes[:, 2] = gt_boxes[:, 2] * (self.req_img_size[0] / self.initial_image_size[0])
                 gt_boxes[:, 3] = gt_boxes[:, 3] * (self.req_img_size[1] / self.initial_image_size[1])
 
+            # proposals_new = np.zeros_like(proposals)
+            # gt_boxes_new = np.zeros_like(gt_boxes)
+            # if proposals.shape[0] != 0:
+            #     proposals_new[:, 1] = proposals[:, 0] * (self.req_img_size[0] / self.initial_image_size[0])
+            #     proposals_new[:, 0] = proposals[:, 1] * (self.req_img_size[1] / self.initial_image_size[1])
+            #     proposals_new[:, 3] = proposals[:, 2] * (self.req_img_size[0] / self.initial_image_size[0])
+            #     proposals_new[:, 2] = proposals[:, 3] * (self.req_img_size[1] / self.initial_image_size[1])
+
+            # if gt_boxes.shape[0] != 0:
+            #     gt_boxes_new[:, 1] = gt_boxes[:, 0] * (self.req_img_size[0] / self.initial_image_size[0])
+            #     gt_boxes_new[:, 0] = gt_boxes[:, 1] * (self.req_img_size[1] / self.initial_image_size[1])
+            #     gt_boxes_new[:, 3] = gt_boxes[:, 2] * (self.req_img_size[0] / self.initial_image_size[0])
+            #     gt_boxes_new[:, 2] = gt_boxes[:, 3] * (self.req_img_size[1] / self.initial_image_size[1])
+
             label = np.zeros((self.num_classes, ))
             label[0] = 1 if gt_boxes.shape[0] != 0 else 0
             gt_class_list = np.zeros((gt_boxes.shape[0], ))
             self.preload_labels.append(label)
-            self.preload_gt_boxes.append(gt_boxes)
             self.preload_gt_class_list.append(gt_class_list)
             self.filenames_list.append(filename)
 
+            # self.preload_gt_boxes.append(gt_boxes)
+            # self.preload_proposals.append(proposals)
+            
+            ###
+            self.preload_gt_boxes.append(gt_boxes)
             self.preload_proposals.append(proposals)
+            ###
+
         ####
     def __len__(self) -> int:
         return len(self.filenames_list)
@@ -432,7 +452,8 @@ class KITTICam(Dataset):
         proposals = self.preload_proposals[index]
         gt_class_list = self.preload_gt_class_list[index]
 
-        return {'image': image,
+        return {'filename': self.filenames_list[index],
+                'image': image,
                 'labels': torch.from_numpy(labels),
                 'gt_boxes': torch.from_numpy(gt_boxes),
                 'proposals': torch.from_numpy(proposals),

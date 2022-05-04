@@ -5,7 +5,7 @@ import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
 from WsdnnPIXOR import WSDDNPIXOR
-from dataset import KITTIBEV
+from dataset import KITTIBEV, KITTICam
 from torch.utils.data import random_split
 from torch.utils.data import DataLoader
 from torchvision.ops import nms
@@ -17,6 +17,24 @@ import sklearn.metrics
 from visualize_dataset_new import plot_bev
 from loss import FocalLoss
 import torch.nn.functional as F
+from torchvision import transforms
+
+
+def tensor_to_PIL(image):
+    """
+    converts a tensor normalized image (imagenet mean & std) into a PIL RGB image
+    will not work with batches (if batch size is 1, squeeze before using this)
+    """
+    inv_normalize = transforms.Normalize(
+        mean=[-0.485/0.229, -0.456/0.224, -0.406/0.255],
+        std=[1/0.229, 1/0.224, 1/0.255],
+    )
+
+    inv_tensor = inv_normalize(image)
+    inv_tensor = torch.clamp(inv_tensor, 0, 1)
+    original_image = transforms.ToPILImage()(inv_tensor).convert("RGB")
+
+    return original_image
 
 def load_pretrained(model, filename='40epoch'):
     own_state = model.state_dict()
@@ -84,7 +102,8 @@ def validate(test_loader,
              nms_iou_threshold=0.5,
              iou_list = [0.05, 0.1, 0.2, 0.3, 0.4],
              inv_class=None,
-             direct_class=None):
+             direct_class=None,
+             test_dataset=None):
     np.random.seed(2)
     num_classes = 2
     loss_total = 0.0
@@ -129,7 +148,8 @@ def validate(test_loader,
                 class_num_for_plotting = torch.ones((retained_proposals.shape[0], 1)) * class_num
                 plotting_proposals = torch.cat([plotting_proposals,
                                                 torch.cat([retained_proposals.detach().cpu(), 
-                                                           class_num_for_plotting], dim=1)], dim=0)
+                                                           class_num_for_plotting], dim=1)], 
+                                                        dim=0)
 
                 for i in range(retained_proposals.shape[0]):
                     modified_pred_boxes = torch.cat([torch.tensor([iter, class_num, retained_scores[i]]), 
@@ -139,14 +159,14 @@ def validate(test_loader,
             if iter in plotting_idxs:
                 all_boxes = []
                 all_gt_plotting_boxes = []
-                raw_image = plot_bev(bev[0].detach().cpu())
+                raw_image = tensor_to_PIL(bev[0].detach().cpu())
 
                 for idx in range(plotting_proposals.shape[0]):
                     box_data = {"position": {
-                        "minX": plotting_proposals[idx, 1].item() / 350,
-                        "minY": plotting_proposals[idx, 0].item() / 400,
-                        "maxX": plotting_proposals[idx, 3].item() / 350,
-                        "maxY": plotting_proposals[idx, 2].item() / 400},
+                        "minX": plotting_proposals[idx, 0].item() / test_dataset.req_img_size[0],
+                        "minY": plotting_proposals[idx, 1].item() / test_dataset.req_img_size[1],
+                        "maxX": plotting_proposals[idx, 2].item() / test_dataset.req_img_size[0],
+                        "maxY": plotting_proposals[idx, 3].item() / test_dataset.req_img_size[1]},
                         "class_id": int(plotting_proposals[idx, 4].item()),
                         "box_caption": inv_class[int(plotting_proposals[idx][4])],
                         }
@@ -155,10 +175,10 @@ def validate(test_loader,
 
                 for idx in range(plotting_gts.shape[0]):
                     box_data_new = {"position": {
-                        "minX": plotting_gts[idx, 2].item() / 350,
-                        "minY": plotting_gts[idx, 1].item() / 400,
-                        "maxX": plotting_gts[idx, 4].item() / 350,
-                        "maxY": plotting_gts[idx, 3].item() / 400},
+                        "minX": plotting_gts[idx, 1].item() / test_dataset.req_img_size[0],
+                        "minY": plotting_gts[idx, 2].item() / test_dataset.req_img_size[1],
+                        "maxX": plotting_gts[idx, 3].item() / test_dataset.req_img_size[0],
+                        "maxY": plotting_gts[idx, 4].item() / test_dataset.req_img_size[1]},
                         "class_id": int(plotting_gts[idx, 0].item()),
                         "box_caption": inv_class[int(plotting_gts[idx][0])],
                         }
@@ -207,9 +227,9 @@ def map_classification(output, target):
     return sum(ap) / (len(ap) if len(ap) > 0 else 1)
 
 if __name__ == '__main__':
-    valid_data_list_filename = "./valid_data_list_after_threshold.txt"
-    lidar_folder_name = "/media/akshay/Data/KITTI/"
-    dataset = KITTIBEV(valid_data_list_filename=valid_data_list_filename, 
+    valid_data_list_filename = "./valid_full_list.txt"
+    lidar_folder_name = "./data/KITTI/"
+    dataset = KITTICam(valid_data_list_filename=valid_data_list_filename, 
                             lidar_folder_name=lidar_folder_name)
     wandb.init("WSDNNPIXOR")
     epochs = 10
@@ -234,13 +254,13 @@ if __name__ == '__main__':
     #optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0001)
     for i in range(epochs):
-        # if i%1 == 0:
-        #     model = model.eval()
-        #     mAP = validate(test_loader, 
-        #                   model, 
-        #                   loss_fn, 
-        #                   inv_class=dataset.inv_class, 
-        #                   direct_class=dataset.class_to_int)
+        if i%1 == 0:
+            model = model.eval()
+            mAP = validate(test_loader, 
+                          model, 
+                          loss_fn, 
+                          inv_class=dataset.inv_class, 
+                          direct_class=dataset.class_to_int)
         model = model.train()
         loss = train(train_loader, model, loss_fn, optimizer, test_loader)
         print("Epoch average Loss: ", loss)
@@ -252,4 +272,5 @@ if __name__ == '__main__':
                           model, 
                           loss_fn, 
                           inv_class=dataset.inv_class, 
-                          direct_class=dataset.class_to_int)
+                          direct_class=dataset.class_to_int,
+                          test_dataset=dataset)
