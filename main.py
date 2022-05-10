@@ -63,7 +63,7 @@ def train(train_loader,
                            leave=False):
         model = model.train()
         bev = data['bev'].cuda()
-        labels = data['labels'].cuda()
+        labels = data['labels'].float().cuda()
         #gt_boxes = data['gt_boxes'].cuda()
         proposals = data['proposals'].squeeze().float().cuda()
         proposals = torch.cuda.FloatTensor(proposals)
@@ -71,23 +71,19 @@ def train(train_loader,
         #with torch.cuda.amp.autocast():
         preds = model(bev, proposals)
         preds_class = preds.sum(dim=0).reshape(1, -1)
-        preds_class_sigmoid = torch.sigmoid(preds_class)
-        total_preds = torch.cat([total_preds, preds_class_sigmoid], dim=0)
-        total_target = torch.cat([total_target, labels], dim=0)
+        # preds_class_sigmoid = torch.sigmoid(preds_class)
+        # total_preds = torch.cat([total_preds, preds_class_sigmoid], dim=0)
+        # total_target = torch.cat([total_target, labels], dim=0)
         preds_class = torch.clamp(preds_class, 0, 1)
         loss = loss_fn(preds_class, labels)
-
+        print(labels, preds_class)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        # scaler.scale(loss).backward()
-        # scaler.step(optimizer)
-        # scaler.update()
-        #loss_bce_total += F.binary_cross_entropy_with_logits(preds_class, labels, reduction='sum').item()
         loss_total += loss.item() * bev.shape[0]
         data_count += bev.shape[0]
         if iter%500 == 0 and iter != 0:
-            map_class = map_classification(total_preds, total_target)
+            #map_class = map_classification(total_preds, total_target)
             wandb.log({"Loss":loss_total / data_count})
             print("Focal Loss: ", loss_total / data_count, " BCE loss: ", loss_bce_total / data_count,  " mAP: ", map_class)
         # if iter%5000 == 0 and iter != 0:
@@ -119,15 +115,15 @@ def validate(test_loader,
             plotting_proposals = torch.zeros((0, 5))
             plotting_gts = torch.zeros((0, 5))
             bev = data['bev'].cuda()
-            labels = data['labels'].cuda()
+            labels = data['labels'].float().cuda()
             gt_boxes = data['gt_boxes'].reshape(-1, 4) #.cuda()
             proposals = data['proposals'].squeeze().float().cuda()
             gt_class_list = data['gt_class_list'].reshape(-1) #.cuda()
 
             cls_probs = model(bev, proposals)
             preds_class = cls_probs.sum(dim=0).reshape(1, -1)
-            loss = loss_fn(preds_class, labels)
-            loss_total += loss.item()
+            # loss = loss_fn(preds_class, labels)
+            # loss_total += loss.item()
             data_count += bev.shape[0]
 
             for i in range(gt_boxes.shape[0]):
@@ -159,14 +155,14 @@ def validate(test_loader,
             if iter in plotting_idxs:
                 all_boxes = []
                 all_gt_plotting_boxes = []
-                raw_image = tensor_to_PIL(bev[0].detach().cpu())
+                raw_image = plot_bev(bev[0].detach().cpu())
 
                 for idx in range(plotting_proposals.shape[0]):
                     box_data = {"position": {
-                        "minX": plotting_proposals[idx, 0].item() / test_dataset.req_img_size[0],
-                        "minY": plotting_proposals[idx, 1].item() / test_dataset.req_img_size[1],
-                        "maxX": plotting_proposals[idx, 2].item() / test_dataset.req_img_size[0],
-                        "maxY": plotting_proposals[idx, 3].item() / test_dataset.req_img_size[1]},
+                        "minX": plotting_proposals[idx, 0].item() / 400,
+                        "minY": plotting_proposals[idx, 1].item() / 350,
+                        "maxX": plotting_proposals[idx, 2].item() / 400,
+                        "maxY": plotting_proposals[idx, 3].item() / 350},
                         "class_id": int(plotting_proposals[idx, 4].item()),
                         "box_caption": inv_class[int(plotting_proposals[idx][4])],
                         }
@@ -175,10 +171,10 @@ def validate(test_loader,
 
                 for idx in range(plotting_gts.shape[0]):
                     box_data_new = {"position": {
-                        "minX": plotting_gts[idx, 1].item() / test_dataset.req_img_size[0],
-                        "minY": plotting_gts[idx, 2].item() / test_dataset.req_img_size[1],
-                        "maxX": plotting_gts[idx, 3].item() / test_dataset.req_img_size[0],
-                        "maxY": plotting_gts[idx, 4].item() / test_dataset.req_img_size[1]},
+                        "minX": plotting_gts[idx, 1].item() / 400,
+                        "minY": plotting_gts[idx, 2].item() / 350,
+                        "maxX": plotting_gts[idx, 3].item() / 400,
+                        "maxY": plotting_gts[idx, 4].item() / 350},
                         "class_id": int(plotting_gts[idx, 0].item()),
                         "box_caption": inv_class[int(plotting_gts[idx][0])],
                         }
@@ -202,7 +198,7 @@ def validate(test_loader,
                 
     for iou in iou_list:
         #print(all_gt_boxes.shape, all_gt_boxes.shape)
-        AP = calculate_ap(all_pred_boxes, all_gt_boxes, iou, inv_class=inv_class, total_cls_num=num_classes)
+        AP, _, _ = calculate_ap(all_pred_boxes, all_gt_boxes, iou, inv_class=inv_class, total_cls_num=num_classes)
         mAP = 0 if len(AP) == 0 else sum(AP) / len(AP)
         #return mAP.item(), AP
         wandb.log({"map@ " + str(iou): mAP})
@@ -229,7 +225,7 @@ def map_classification(output, target):
 if __name__ == '__main__':
     valid_data_list_filename = "./valid_full_list.txt"
     lidar_folder_name = "./data/KITTI/"
-    dataset = KITTICam(valid_data_list_filename=valid_data_list_filename, 
+    dataset = KITTIBEV(valid_data_list_filename=valid_data_list_filename, 
                             lidar_folder_name=lidar_folder_name)
     wandb.init("WSDNNPIXOR")
     epochs = 10
@@ -248,19 +244,20 @@ if __name__ == '__main__':
     print(len(train_dataset), len(test_dataset))
 
     #scaler = torch.cuda.amp.GradScaler()
-    #loss_fn = nn.BCEWithLogitsLoss(reduction='sum')
-    loss_fn = FocalLoss(alpha=0.25, gamma=2)
+    loss_fn = nn.BCELoss(reduction='sum')
+    #loss_fn = FocalLoss(alpha=0.25, gamma=2)
     model = model.cuda()
     #optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.01, momentum=0.9, weight_decay=0.0001)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=0.0001)
     for i in range(epochs):
-        if i%1 == 0:
-            model = model.eval()
-            mAP = validate(test_loader, 
-                          model, 
-                          loss_fn, 
-                          inv_class=dataset.inv_class, 
-                          direct_class=dataset.class_to_int)
+        # if i%1 == 0:
+        #     model = model.eval()
+        #     mAP = validate(test_loader, 
+        #                   model, 
+        #                   loss_fn, 
+        #                   inv_class=dataset.inv_class, 
+        #                   direct_class=dataset.class_to_int,
+        #                   test_dataset=test_dataset)
         model = model.train()
         loss = train(train_loader, model, loss_fn, optimizer, test_loader)
         print("Epoch average Loss: ", loss)

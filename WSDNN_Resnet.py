@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 class WSDNN_Resnet(nn.Module):
     def __init__(self, 
-                roi_size=(6, 6),
+                roi_size=(16, 5),
                 num_class=1):
         super(WSDNN_Resnet, self).__init__()
         self.roi_size = roi_size
@@ -17,23 +17,25 @@ class WSDNN_Resnet(nn.Module):
         for param in resnet.parameters():
             param.requires_grad = False
 
-        self.encoder = torch.nn.Sequential(*(list(resnet.children())[:-2]))
+        self.encoder = torch.nn.Sequential(*(list(resnet.children())[:-3]))
 
-        self.roi_pool = torchvision.ops.roi_pool
+        self.roi_pool = torchvision.ops.roi_align
         self.classifier = nn.Sequential(
-                        nn.Linear(2048*self.roi_size[0]*self.roi_size[1], 4096), 
+                        nn.Linear(1024*self.roi_size[0]*self.roi_size[1], 4096), 
                         nn.ReLU(inplace=True), 
                         nn.Linear(4096, 4096), 
+                        nn.Dropout(p=0.5),
                         nn.ReLU(inplace=True))
 
-        self.score_fc   = nn.Sequential(
+        self.score_fc = nn.Sequential(
                             nn.Linear(4096, self.num_class))
                             #nn.Softmax(dim=1))
 
-        self.bbox_fc    = nn.Sequential(
+        self.bbox_fc = nn.Sequential(
                             nn.Linear(4096, self.num_class))
                             #nn.Softmax(dim=0))
-        
+        self.dropout = nn.Dropout() 
+
     def forward(self, x, rois):
         #with torch.no_grad():
         out = self.encoder(x)
@@ -42,14 +44,14 @@ class WSDNN_Resnet(nn.Module):
         spp_output = spp_output.reshape(spp_output.shape[0], -1)
         classifier_ouput = self.classifier(spp_output)
         
-        class_scores = self.score_fc(classifier_ouput)
-        class_scores = F.sigmoid(class_scores)
+        class_scores = self.dropout(self.score_fc(classifier_ouput))
+        class_scores = torch.softmax(class_scores, 0)
 
-        bbox_scores = self.bbox_fc(classifier_ouput)
-        bbox_scores = F.softmax(bbox_scores, dim=0)
+        bbox_scores = self.dropout(self.bbox_fc(classifier_ouput))
+        bbox_scores = torch.sigmoid(bbox_scores)
 
         cls_prob = class_scores * bbox_scores 
-        return cls_prob.reshape(cls_prob.shape[0], -1, self.num_class)
+        return cls_prob.unsqueeze(1)
 
 
 class WSDNN_Alexnet(nn.Module):
@@ -88,7 +90,7 @@ class WSDNN_Alexnet(nn.Module):
                             nn.Linear(4096, self.num_class))
                             #nn.Softmax(dim=0))
         
-    def forward(self, x, rois):
+    def forward(self, x, rois, isval=False):
         #with torch.no_grad():
         out = self.features(x)
         h, w = out.shape[2], out.shape[3]
@@ -103,7 +105,10 @@ class WSDNN_Alexnet(nn.Module):
         bbox_scores = torch.sigmoid(bbox_scores)
 
         cls_prob = class_scores * bbox_scores 
-        return cls_prob.unsqueeze(1)
+        if isval:
+            return cls_prob.unsqueeze(1), class_scores.unsqueeze(1)
+        else:
+            return cls_prob.unsqueeze(1)
 
 if __name__ == '__main__':
     model = WSDNN_Resnet()

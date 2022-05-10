@@ -1,5 +1,7 @@
 
+from cProfile import label
 from multiprocessing import reduction
+from signal import valid_signals
 import torch
 import torch.nn as nn
 import numpy as np
@@ -9,7 +11,7 @@ from dataset import KITTICam
 from torch.utils.data import random_split
 from torch.utils.data import DataLoader
 from torchvision.ops import nms
-from post_processing import calculate_ap
+from post_processing import calculate_ap, mean_average_precision, tensor_to_PIL, plot_3d
 import wandb
 import math
 import sklearn
@@ -18,23 +20,9 @@ from visualize_dataset_new import plot_bev
 from loss import FocalLoss
 import torch.nn.functional as F
 from torchvision import transforms
+#import post_processing.nms as my_nms
+import matplotlib.pyplot as plt
 
-
-def tensor_to_PIL(image):
-    """
-    converts a tensor normalized image (imagenet mean & std) into a PIL RGB image
-    will not work with batches (if batch size is 1, squeeze before using this)
-    """
-    inv_normalize = transforms.Normalize(
-        mean=[-0.485/0.229, -0.456/0.224, -0.406/0.255],
-        std=[1/0.229, 1/0.224, 1/0.255],
-    )
-
-    inv_tensor = inv_normalize(image)
-    inv_tensor = torch.clamp(inv_tensor, 0, 1)
-    original_image = transforms.ToPILImage()(inv_tensor).convert("RGB")
-
-    return original_image
 
 def train(train_loader, 
           model, 
@@ -69,7 +57,7 @@ def train(train_loader,
         loss = loss_fn(preds_class, labels)
         
         bce_funtion = torch.nn.BCELoss(reduction='sum')
-        #loss_bce_total += bce_funtion(preds_class, labels).item()
+        loss_bce_total += bce_funtion(preds_class, labels).item()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -82,20 +70,15 @@ def train(train_loader,
         if iter%500 == 0 and iter != 0:
             #map_class = map_classification(total_preds, total_target)
             wandb.log({"Loss":loss_total / data_count})
-            print("Loss: ", loss_total / data_count , " BCE loss: ", loss_bce_total / data_count) #,  " mAP: ", map_class)
-            # loss_total = 0
-            # data_count = 0
-            # loss_bce_total = 0
-        # if iter%5000 == 0 and iter != 0:
-        #     model.eval()
-        #     validate(test_loader, model, loss_fn)
+            print("Focal Loss: ", loss_total / data_count , " BCE loss: ", loss_bce_total / data_count) #,  " mAP: ", map_class)
+
     return loss_bce_total / data_count
 
 def validate(test_loader, 
              model, 
              loss_fn, 
-             score_threshold=0.5,
-             nms_iou_threshold=0.5,
+             score_threshold=0.4,
+             nms_iou_threshold=0.1,
              iou_list = [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
              inv_class=None,
              direct_class=None,
@@ -104,10 +87,12 @@ def validate(test_loader,
     num_classes = 1
     loss_total = 0.0
     data_count = 0.0
+    all_gt_boxes_list = []
+    all_pred_boxes_list = []
     all_gt_boxes = torch.zeros((0, 6))
     all_pred_boxes = torch.zeros((0, 7))
     plotting_idxs = np.random.randint(0, 500, (50))
-
+    plotting_idxs_3d = plotting_idxs[:50]
     with torch.no_grad():
         for iter, data in tqdm(enumerate(test_loader),
                             total=len(test_loader),
@@ -115,36 +100,55 @@ def validate(test_loader,
             plotting_proposals = torch.zeros((0, 5))
             plotting_gts = torch.zeros((0, 5))
             bev = data['image'].cuda()
+            filename = data['filename'][0]
             labels = data['labels'].float().cuda()
             gt_boxes = data['gt_boxes'].reshape(-1, 4) #.cuda()
             proposals = data['proposals'].squeeze().float().cuda()
             gt_class_list = data['gt_class_list'].reshape(-1) #.cuda()
-
-            cls_probs = model(bev, proposals)
-            #preds_class = cls_probs.sum(dim=0).reshape(1, -1)
-            # loss = loss_fn(preds_class, labels)
-            # loss_total += loss.item()
+            gt_boxes_3d = data['gt_boxes_3d'].reshape(-1, 6)
+            proposals_3d = data['proposals_3d'].squeeze().float().cuda()
+            scan = data['scan'].reshape(-1, 4)
+            cls_probs= model(bev, proposals)
             data_count += bev.shape[0]
 
             for i in range(gt_boxes.shape[0]):
+                modified_gt_box_list = [iter, 
+                                        gt_class_list[i].item(),
+                                        1,
+                                        *gt_boxes[i].tolist()]
+                all_gt_boxes_list.append(modified_gt_box_list)
                 modified_boxes = torch.cat([torch.tensor([iter, gt_class_list[i]]), gt_boxes[i]]).reshape(1, -1)
                 all_gt_boxes = torch.cat([all_gt_boxes, modified_boxes], dim=0)
                 plotting_gts = torch.cat([plotting_gts,
                                           modified_boxes[0, 1:].reshape(1, -1)], dim=0)
 
             for class_num in range(num_classes):
-                curr_class_scores = cls_probs[:, class_num]
+                #curr_class_scores = bbox_scores[:, class_num]
+                #### to plot pred in 3d offline plot
+                #valid_3d_idx = torch.arange(0, cls_probs.shape[0])
                 ####
-                #curr_class_scores = torch.sigmoid(curr_class_scores)
-                ###
-                #score_threshold = 1 / cls_probs.shape[0]
-                valid_score_idx = torch.where(curr_class_scores >= score_threshold)
+
+                curr_class_scores = cls_probs[:, class_num]
+                valid_score_idx = torch.where(curr_class_scores >= score_threshold / proposals.shape[0])
                 valid_scores = curr_class_scores[valid_score_idx]
+                
+                #valid_3d_idx = valid_3d_idx[valid_score_idx[0]]
+
                 valid_proposals = proposals[valid_score_idx[0], :]
-                #print(valid_proposals.shape, valid_scores.shape, proposals.shape)
+                valid_proposals_3d = proposals_3d[valid_score_idx[0], :]
                 retained_idx = nms(valid_proposals, valid_scores, nms_iou_threshold)
                 retained_scores = valid_scores[retained_idx]
                 retained_proposals = valid_proposals[retained_idx]
+                retained_proposals_3d = valid_proposals_3d[retained_idx]
+                
+                #valid_3d_idx = valid_3d_idx[retained_idx]
+                if iter in plotting_idxs_3d:
+                    plot_3d(gt_boxes_3d, retained_proposals_3d, scan)
+                #write_prediction(valid_3d_idx, filename)
+                # curr_class_scores = cls_probs[:, class_num].squeeze(-1)
+                # retained_idx = nms(proposals, curr_class_scores, nms_iou_threshold)
+                # retained_scores = curr_class_scores[retained_idx]
+                # retained_proposals = proposals[retained_idx]
 
                 class_num_for_plotting = torch.ones((retained_proposals.shape[0], 1)) * class_num
                 plotting_proposals = torch.cat([plotting_proposals,
@@ -152,6 +156,11 @@ def validate(test_loader,
                                                            class_num_for_plotting], dim=1)], dim=0)
 
                 for i in range(retained_proposals.shape[0]):
+                    modified_proposal_list = [iter,
+                                              class_num,
+                                              retained_scores[i].item(),
+                                              *retained_proposals[i].detach().cpu().tolist()]
+                    all_pred_boxes_list.append(modified_proposal_list)
                     modified_pred_boxes = torch.cat([torch.tensor([iter, class_num, retained_scores[i]]), 
                                                                 retained_proposals[i].detach().cpu()]).reshape(1, -1)
                     all_pred_boxes = torch.cat([all_pred_boxes, modified_pred_boxes], dim=0)
@@ -164,11 +173,13 @@ def validate(test_loader,
                 for idx in range(plotting_proposals.shape[0]):
                     box_data = {"position": {
                         "minX": plotting_proposals[idx, 0].item() / dataset.req_img_size[0],
-                        "minY": plotting_proposals[idx, 1].item() / dataset.req_img_size[0],
+                        "minY": plotting_proposals[idx, 1].item() / dataset.req_img_size[1],
                         "maxX": plotting_proposals[idx, 2].item() / dataset.req_img_size[0],
-                        "maxY": plotting_proposals[idx, 3].item() / dataset.req_img_size[0]},
-                        "class_id": int(plotting_proposals[idx, 4].item()),
-                        "box_caption": inv_class[int(plotting_proposals[idx][4])],
+                        "maxY": plotting_proposals[idx, 3].item() / dataset.req_img_size[1]},
+                        #"class_id": int(plotting_proposals[idx, 4].item()),
+                        #"box_caption": inv_class[int(plotting_proposals[idx][4])],
+                        "class_id": 1,
+                        "box_caption": "Prediction Cars boxes",
                         }
                     all_boxes.append(box_data)
                 
@@ -176,11 +187,13 @@ def validate(test_loader,
                 for idx in range(plotting_gts.shape[0]):
                     box_data_new = {"position": {
                         "minX": plotting_gts[idx, 1].item() / dataset.req_img_size[0],
-                        "minY": plotting_gts[idx, 2].item() / dataset.req_img_size[0],
+                        "minY": plotting_gts[idx, 2].item() / dataset.req_img_size[1],
                         "maxX": plotting_gts[idx, 3].item() / dataset.req_img_size[0],
-                        "maxY": plotting_gts[idx, 4].item() / dataset.req_img_size[0]},
-                        "class_id": int(plotting_gts[idx, 0].item()),
-                        "box_caption": inv_class[int(plotting_gts[idx][0])],
+                        "maxY": plotting_gts[idx, 4].item() / dataset.req_img_size[1]},
+                        "class_id": 0,
+                        "box_caption": "GT Cars boxes",
+                        # "class_id": int(plotting_gts[idx, 0].item()),
+                        # "box_caption": inv_class[int(plotting_gts[idx][0])],
                         }
                     all_gt_plotting_boxes.append(box_data_new)
                     
@@ -199,26 +212,56 @@ def validate(test_loader,
                 #                         "class_labels": inv_class}
                 #                         })
                 # wandb.log({"Image gt " + str(iter): box_image})
-                
+    xss = []
+    yss = []
+    keys = []           
     for iou in iou_list:
         #print(all_gt_boxes.shape, all_gt_boxes.shape)
-        AP = calculate_ap(all_pred_boxes, all_gt_boxes, iou, inv_class=inv_class, total_cls_num=num_classes)
+        ####
+        his_ap = mean_average_precision(all_pred_boxes_list, 
+                                        all_gt_boxes_list,
+                                        iou)
+        print("His ap: ", his_ap)
+        ####
+
+        AP, xs, ys = calculate_ap(all_pred_boxes, all_gt_boxes, iou, inv_class=inv_class, total_cls_num=num_classes)
         mAP = 0 if len(AP) == 0 else sum(AP) / len(AP)
         #return mAP.item(), AP
         wandb.log({"map@ " + str(iou): mAP})
         print("Iou ", iou, " mAP ", mAP)
+        xss.append(xs)
+        yss.append(ys)
+        keys.append(str(iou))
+
+    fig, ax = plt.subplots(1)
+    ax.set_xlabel("Recall")
+    ax.set_ylabel("Precision")
+    for no in range(len(xss)):
+        ax.plot(xss[no], yss[no], label=keys[no])
+    ax.legend()
+    wandb.log({"PR_org": fig})
+    image_pr = wandb.Image(fig)
+    wandb.log({"PR_matplotlib": image_pr})
+    wandb.log({"PR-Curves": wandb.plot.line_series(xss,
+                                                   yss,
+                                                   keys=keys)})
+
     return mAP
 
 
 if __name__ == '__main__':
+    #torch.random.seed(100)
+    torch.manual_seed(100)
     valid_data_list_filename = "./valid_full_list.txt"
     lidar_folder_name = "./data/"
     dataset = KITTICam(valid_data_list_filename=valid_data_list_filename, 
-                            lidar_folder_name=lidar_folder_name)
-    wandb.init("WSDNNResnet")
-    epochs = 10
-    model = WSDNN_Alexnet()
-
+                       lidar_folder_name=lidar_folder_name,
+                       req_img_size=(1024, 512))
+    wandb.init(project="WSDNN_Resnet")
+    epochs = 50
+    #model = WSDNN_Alexnet(roi_size=(12, 6))
+    model = WSDNN_Resnet()
+    
     train_dataset_length = int(0.80 * len(dataset))
     train_dataset, test_dataset = random_split(dataset, [train_dataset_length,
                                                         len(dataset) - train_dataset_length],
@@ -227,28 +270,16 @@ if __name__ == '__main__':
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
     print(len(train_dataset), len(test_dataset))
 
-    #scaler = torch.cuda.amp.GradScaler()
-    loss_fn = nn.BCELoss(reduction='sum')
-    #loss_fn = FocalLoss(alpha=0.25, gamma=2)
-    #loss_fn = nn.MSELoss()
+    #loss_fn = nn.BCELoss(reduction='sum')
+    loss_fn = FocalLoss(alpha=0.25, gamma=2)
+
     model = model.cuda()
     #optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, momentum=0.9, weight_decay=0.0005)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.3)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9, weight_decay=0.0005)
+    optimizer.load_state_dict(torch.load('opt_res_focal_loss_plt.pth'))
+    model.load_state_dict(torch.load('model_res_focal_loss_plt.pth'))
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.1)
     for i in range(epochs):
-        # if i%1 == 0:
-        #     model = model.eval()
-        #     mAP = validate(test_loader, 
-        #                   model, 
-        #                   loss_fn, 
-        #                   inv_class=dataset.inv_class, 
-        #                   direct_class=dataset.class_to_int,
-        #                   dataset=dataset)
-        model = model.train()
-        loss = train(train_loader, model, loss_fn, optimizer, test_loader)
-        print("Epoch average Loss: ", loss)
-        torch.save(model.state_dict(), "model_res.pth")
-        torch.save(optimizer.state_dict(), "opt_res.pth")
         if i%1 == 0:
             model = model.eval()
             mAP = validate(test_loader, 
@@ -257,5 +288,20 @@ if __name__ == '__main__':
                           inv_class=dataset.inv_class, 
                           direct_class=dataset.class_to_int,
                           dataset=dataset)
+        print("###################################### Running Epoch: ", i, "########################################################")
+        model = model.train()
+        loss = train(train_loader, model, loss_fn, optimizer, test_loader)
+        print("Epoch average Loss: ", loss)
+        torch.save(model.state_dict(), "model_res_focal_loss_plt.pth")
+        torch.save(optimizer.state_dict(), "opt_res_focal_loss_plt.pth")
+        torch.save(scheduler.state_dict(), "scheduler_focal_loss_plt.pth")
+        # if i%1 == 0:
+        #     model = model.eval()
+        #     mAP = validate(test_loader, 
+        #                   model, 
+        #                   loss_fn, 
+        #                   inv_class=dataset.inv_class, 
+        #                   direct_class=dataset.class_to_int,
+        #                   dataset=dataset)
 
         scheduler.step()

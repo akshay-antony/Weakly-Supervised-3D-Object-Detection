@@ -9,31 +9,6 @@ import os
 from tqdm import tqdm
 from dataset import KITTIBEV
 
-# def point_in_roi(self, point):
-#     if (point[0] - self.geometry['W1']) < 0.01 or (self.geometry['W2'] - point[0]) < 0.01:
-#         return False
-#     if (point[1] - self.geometry['L1']) < 0.01 or (self.geometry['L2'] - point[1]) < 0.01:
-#         return False
-#     if (point[2] - self.geometry['H1']) < 0.01 or (self.geometry['H2'] - point[2]) < 0.01:
-#         return False
-#     return True
-
-# def lidar_preprocess(self, scan):
-#     velo = scan
-#     velo_processed = np.zeros(self.geometry['input_shape'], dtype=np.float32)
-#     intensity_map_count = np.zeros((velo_processed.shape[0], velo_processed.shape[1]))
-#     for i in range(velo.shape[0]):
-#         if self.point_in_roi(velo[i, :]):
-#             x = int((velo[i, 1]-self.geometry['L1']) / 0.1)
-#             y = int((velo[i, 0]-self.geometry['W1']) / 0.1)
-#             z = int((velo[i, 2]-self.geometry['H1']) / 0.1)
-#             velo_processed[x, y, z] = 1
-#             velo_processed[x, y, -1] += velo[i, 3]
-#             intensity_map_count[x, y] += 1
-#     velo_processed[:, :, -1] = np.divide(velo_processed[:, :, -1],  intensity_map_count, \
-#                     where=intensity_map_count!=0)
-#     return velo_processed
-
 def create_corners(x_min, y_min, x_max, y_max):
     corners = np.array([[x_min, y_min], [x_min, y_max], [x_max, y_max], [x_max, y_min]])
     return corners

@@ -72,10 +72,10 @@ def compute_box_3d(dimensions, location, rot_y):
     # compute rotational matrix around yaw axis
     R = roty(rot_y)
 
-    # 3d bounding box dimensions
-    l = dimensions[0]
+    # 3d bounding box dimensions l, w, h starting
+    h = dimensions[0]
     w = dimensions[1]
-    h = dimensions[2]
+    l = dimensions[2]
 
     # 3d bounding box corners
     x_corners = [l / 2, l / 2, -l / 2, -l / 2, l / 2, l / 2, -l / 2, -l / 2]
@@ -157,7 +157,7 @@ def eight_points_to_4points_image(eight_points):
 
     return four_points
 
-def read_proposals(proposals_file, P, V2C, R0):
+def read_proposals(proposals_file, P, V2C, R0, isplot=False):
     """ Reads a KITTI detection proposal file.
         Output:
             dets: list of detections
@@ -177,6 +177,8 @@ def read_proposals(proposals_file, P, V2C, R0):
 
     image_3d = [project_velo_to_image(det, P, V2C, R0) for det in dets]
     img_coords = [eight_points_to_4points_image(det) for det in image_3d]
+    if isplot:
+        return img_coords, boxes_6_points
     return img_coords
 
 def read_label(label_file, req_label = 'Car'):
@@ -191,7 +193,7 @@ def read_label(label_file, req_label = 'Car'):
         for gt in list_gt:
             gt_dict = {}
             gt_dict['type'] = gt[0]
-            if gt[0] != 'Car':
+            if gt[0] != 'Car' and gt[0] != 'Van':
                 continue
             gt_dict['truncated'] = float(gt[1])
             gt_dict['occluded'] = float(gt[2])
@@ -249,7 +251,7 @@ def test():
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-def get_pixel_coordinates(filename, basefilename="/media/akshay/Data/"):
+def get_pixel_coordinates(filename, basefilename="./data/"):
     
     '''
         The filename needs to be a string wihout any extension (ex. 000000)
@@ -277,7 +279,55 @@ def get_pixel_coordinates(filename, basefilename="/media/akshay/Data/"):
     proposals = refine_image_proposals(proposals)
     return proposals, gt_boxes
 
-def refine_gt_boxes(gt_boxes, gt_velo_boxes):
+
+def get_pixel_coordinates_and_3d(filename, basefilename="./data/", isplot=False):
+    
+    '''
+        The filename needs to be a string wihout any extension (ex. 000000)
+        The function returns two numpy arrays with the pixel coordinates of proposals and gt_boxes repectively
+        Put the paths carefully for each file
+    '''
+    calib = read_calib_file(basefilename + "KITTI/training/calib/{}.txt".format(filename))
+
+    P = calib['P2']
+    P = np.reshape(P, [3,4])
+    V2C = calib['Tr_velo_to_cam']
+    V2C = np.reshape(V2C, [3,4])
+    R0 = calib["R0_rect"]
+    R0 = np.reshape(R0, [3,3])
+
+    gt_boxes = np.array(get_2D_gt_boxes(basefilename + "KITTI/training/label_2/{}.txt".format(filename)))
+    gt_velo_boxes = get_velo_from_cam(filename, basefilename).reshape(-1, 6)
+    gt_boxes, gt_boxes_3d = refine_gt_boxes(gt_boxes, gt_velo_boxes, isplot)
+
+    boxes1, boxes1_3d = read_proposals(basefilename + "KITTI/training/bbox_pcl/{}.txt".format(filename), 
+                                       P, V2C, R0, isplot)
+    boxes1 = np.asarray(boxes1)
+    boxes1_3d = np.asarray(boxes1_3d)
+    #boxes1 = refine_proposals(boxes1)
+    boxes2, boxes2_3d = read_proposals(basefilename + "KITTI/training/bbox_open3d/{}.txt".format(filename),
+                                       P, V2C, R0, isplot)
+    boxes2 = np.asarray(boxes2)
+    boxes2_3d = np.asarray(boxes2_3d)
+
+    proposals = np.concatenate((boxes1.reshape(-1, 4), boxes2.reshape(-1, 4)), axis=0) # x_min, y_min, x_max, y_max (n x 4)
+    proposals_3d = np.concatenate((boxes1_3d.reshape(-1, 6),
+                                   boxes2_3d.reshape(-1, 6)), axis=0)
+    proposals, proposals_3d = refine_image_proposals(proposals, proposals_3d, isplot)
+    if isplot:
+        ###
+        gt_boxes_3d_n = gt_boxes_3d.copy()
+        gt_boxes_3d_n[:, 1] = gt_boxes_3d[:, 2]
+        gt_boxes_3d_n[:, 2] = gt_boxes_3d[:, 1]
+        gt_boxes_3d_n[:, 4] = gt_boxes_3d[:, 5]
+        gt_boxes_3d_n[:, 5] = gt_boxes_3d[:, 4]
+
+        ###
+        return proposals, gt_boxes, proposals_3d, gt_boxes_3d
+    return proposals, gt_boxes
+
+
+def refine_gt_boxes(gt_boxes, gt_velo_boxes, isplot=False):
     x_min = 0
     x_max = 35
     y_min = -25
@@ -296,34 +346,39 @@ def refine_gt_boxes(gt_boxes, gt_velo_boxes):
     gt_boxes = gt_boxes[refined_idx]
     #####
     if gt_boxes.shape[0] == 0:
-        return np.zeros((0, 4))
-    
-    ##### compressing the boxes
-    # x = np.where(refined_proposals[:, 1] < y_min, 
-    #                             y_min, refined_proposals[:, 1]) 
-    # refined_proposals = np.where(refined_proposals[:, 3] > x_max,
-    #                             x_max, refined_proposals[:, 3])
-    # refined_proposals = np.where(refined_proposals[:, 4] > y_max,
-    #                             y_max, refined_proposals[:, 4])
-    #####
+        if isplot:
+            return np.zeros((0, 4)), np.zeros((0, 6))
+        else:
+            return np.zeros((0, 4))
+
+    if isplot:
+        return gt_boxes, gt_velo_boxes
     return gt_boxes
 
-def refine_image_proposals(proposals):
+def refine_image_proposals(proposals, proposals_3d, isplot=False):
     x_min = 0
     x_max = 1224
     y_min = 0
-    y_max = 370
+    y_max = 375
 
     ##### Limiting along axis
     refined_idx = np.where(proposals[:, 0] < x_max)
     refined_proposals = proposals[refined_idx].reshape(-1, 4)
+    proposals_3d = proposals_3d[refined_idx].reshape(-1, 6)
+
     refined_idx = np.where(refined_proposals[:, 1] < y_max)
     refined_proposals = refined_proposals[refined_idx].reshape(-1, 4)
+    proposals_3d = proposals_3d[refined_idx].reshape(-1, 6)
+
     refined_idx = np.where(refined_proposals[:, 2] > x_min)
     refined_proposals = refined_proposals[refined_idx].reshape(-1, 4)
+    proposals_3d = proposals_3d[refined_idx].reshape(-1, 6)
+
     refined_idx = np.where(refined_proposals[:, 3] > y_min)
     refined_proposals = refined_proposals[refined_idx].reshape(-1, 4)
+    proposals_3d = proposals_3d[refined_idx].reshape(-1, 6)
     ####
+
     ##### compressing the boxes4
     refined_proposals[:, 0] = np.where(refined_proposals[:, 0] < x_min,
                                 x_min, refined_proposals[:, 0])
@@ -337,9 +392,11 @@ def refine_image_proposals(proposals):
     refined_proposals[:, 3] = np.where(refined_proposals[:, 3] > y_max,
                                 y_max-1, refined_proposals[:, 3])
     #####
+    if isplot:
+        return refined_proposals, proposals_3d
     return refined_proposals
 
-def get_velo_from_cam(filename, basefilename="/media/akshay/Data/"):
+def get_velo_from_cam(filename, basefilename="./data/"):
     '''
         The filename needs to be a string wihout any extension (ex. 000000)
         The function return mxnx3 numpy array with the velodyne coordinates of gt_boxes
@@ -396,16 +453,20 @@ if __name__ == '__main__':
     # test()
     count = 0
     no_count = 0
-    for file in os.listdir("/media/akshay/Data/KITTI/training/image_2"):
+    for file in os.listdir("./data/KITTI/training/image_2"):
         filename = str(file[:-4])
-        proposals , gt_boxes = get_pixel_coordinates(filename)
-        print(filename, gt_boxes.shape, proposals.shape)
+        #proposals , gt_boxes = get_pixel_coordinates(filename)
+        proposals, gt_boxes, proposals_3d, gt_boxes_3d = get_pixel_coordinates_and_3d(filename, isplot=True)
+        print(filename, gt_boxes.shape, 
+              proposals.shape, 
+              gt_boxes_3d.shape,
+              proposals_3d.shape,)
         print("Proposals minx", np.min(proposals[:, 0]),
               "Proposals miny", np.min(proposals[:, 1]),
               "Proposals maxx", np.max(proposals[:, 2]),
               "Proposals maxy", np.max(proposals[:, 3]))
-        image_org = read_image("/media/akshay/Data/" + "KITTI/training/image_2/{}.png".format(filename))
-        image_test = Image.open("/media/akshay/Data/" + "KITTI/training/image_2/{}.png".format(filename))
+        image_org = read_image("./data/" + "KITTI/training/image_2/{}.png".format(filename))
+        image_test = Image.open("./data/" + "KITTI/training/image_2/{}.png".format(filename))
         
         image = cv2.resize(image_org, (512, 512))
         count += 1 if gt_boxes.shape[0] == 0 else 0    
@@ -427,9 +488,9 @@ if __name__ == '__main__':
         #img = plot_2d_boxes(img, boxes2, color=(255,0,0))
         img = plot_2d_boxes(image, gt_boxes, color=(0,255,0))
 
-        cv2.imshow("image_{}".format(0), img)
-        print(image_org.shape)
-        print(image_test.size)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        # cv2.imshow("image_{}".format(0), img)
+        # print(image_org.shape)
+        # print(image_test.size)
+        # cv2.waitKey(0)
+        # cv2.destroyAllWindows()
     print("Zero gt ", count, "Non count ", no_count)

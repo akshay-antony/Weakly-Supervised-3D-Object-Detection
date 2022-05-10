@@ -7,7 +7,7 @@ import os
 from dataprocess import load_bbox, filter_boxes
 import ctypes
 from tqdm import tqdm
-from image_2d_box import get_pixel_coordinates
+from image_2d_box import get_pixel_coordinates, get_pixel_coordinates_and_3d
 from PIL import Image
 from torchvision import transforms
 
@@ -29,7 +29,7 @@ class KITTIBEV(Dataset):
                         'H2': 1.0,
                         'input_shape': (400, 350, 36),
                         'label_shape': (200, 175, 7)}
-
+        self.req_img_size = (400, 350)
         self.use_npy = False
         self.num_classes = len(self.class_names)
         self.lidar_folder_name = lidar_folder_name
@@ -99,7 +99,6 @@ class KITTIBEV(Dataset):
         labels = self.preload_labels[index] 
         gt_boxes = self.preload_gt_boxes[index]
         gt_class_list = self.preload_gt_class_list[index] # .get_labels(self.filenames_list[index])
-        print(self.filenames_list[index], gt_boxes.shape, gt_class_list.shape, proposals.shape)
         return {'bev': torch.from_numpy(bev),
                 'labels': torch.from_numpy(labels),
                 'gt_boxes': torch.from_numpy(gt_boxes),
@@ -162,7 +161,7 @@ class KITTIBEV(Dataset):
                                              filename + ".txt")
         dbscan_proposal_filename = os.path.join(self.lidar_folder_name,
                                                 self.sub_folder,
-                                                "bbox",
+                                                "bbox_open3d",
                                                 filename + ".txt")
         pcl_boxes = load_bbox(pcl_proposal_filename, pcl=True)
         pcl_boxes[:, 1] = np.where(pcl_boxes[:, 1] <= -40, -40, pcl_boxes[:, 1]) #np.max(pcl_boxes[:, 2], -40)
@@ -171,9 +170,9 @@ class KITTIBEV(Dataset):
 
         pcl_augmented = self.augment_pcl(pcl_boxes)
         dbscan_boxes = load_bbox(dbscan_proposal_filename, pcl=False) 
-        dbscan_filtered_boxes = filter_boxes(dbscan_boxes,
-                                            100 - pcl_boxes.shape[0])
-        combined_boxes = np.concatenate([pcl_boxes, dbscan_filtered_boxes], axis=0)
+        # dbscan_filtered_boxes = filter_boxes(dbscan_boxes,
+        #                                     100 - pcl_boxes.shape[0])
+        combined_boxes = np.concatenate([pcl_boxes, dbscan_boxes], axis=0)
 
         # check row order
         combined_boxes_2d = np.concatenate([combined_boxes[:, 1].reshape(-1, 1),
@@ -201,15 +200,11 @@ class KITTIBEV(Dataset):
         combined_augmented_boxes_2d = combined_augmented_boxes_2d[valid_idx_in_]
         valid_idx_in_ = np.where(combined_augmented_boxes_2d[:, 1] <= 349)
         combined_augmented_boxes_2d = combined_augmented_boxes_2d[valid_idx_in_]
-        # if np.min(combined_augmented_boxes_2d[:, 0]) >= 600 or \
-        #    np.max(combined_augmented_boxes_2d[:, 2]) < 200 or \
-        #    np.max(combined_augmented_boxes_2d[:, 3]) >= 350:
-        #    print("hi")
-        ########
-
         combined_augmented_boxes_2d = np.concatenate([combined_augmented_boxes_2d, pcl_augmented], axis=0)
         combined_augmented_boxes_2d[:, 0] = np.where(combined_augmented_boxes_2d[:, 0] < 0, 
                                             0, combined_augmented_boxes_2d[:, 0])
+        combined_augmented_boxes_2d[:, 0] = np.where(combined_augmented_boxes_2d[:, 1] < 0, 
+                                            0, combined_augmented_boxes_2d[:, 1])
         combined_augmented_boxes_2d[:, 2] = np.where(combined_augmented_boxes_2d[:, 2] >= 400,
                                             399, combined_augmented_boxes_2d[:, 2])
         combined_augmented_boxes_2d[:, 3] = np.where(combined_augmented_boxes_2d[:, 3] >= 350, 
@@ -351,7 +346,7 @@ class KITTICam(Dataset):
                 lidar_folder_name=None,
                 label_folder_name=None,
                 valid_data_list_filename=None,
-                req_img_size=(512, 512)):
+                req_img_size=(1242, 375)):
         self.x_min = -25
         self.x_max = 25
         self.y_min = 0
@@ -382,7 +377,9 @@ class KITTICam(Dataset):
         self.preload_gt_boxes = []
         self.preload_gt_class_list = []
         self.filenames_list = []
-        self.transforms = transforms.Compose([transforms.Resize(req_img_size),
+        self.preload_proposals_3d = []
+        self.preload_gt_boxes_3d = []
+        self.transforms = transforms.Compose([transforms.Resize((self.req_img_size[1], self.req_img_size[0])),
                                               transforms.ToTensor(),
                                               transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
@@ -390,7 +387,10 @@ class KITTICam(Dataset):
         for filename in tqdm(filenames_list,
                             total=len(filenames_list),
                             leave=False):
-            proposals, gt_boxes = get_pixel_coordinates(filename, lidar_folder_name)
+            #proposals, gt_boxes = get_pixel_coordinates(filename, lidar_folder_name)
+            proposals, gt_boxes, proposals_3d, gt_boxes_3d = get_pixel_coordinates_and_3d(filename,
+                                                                    lidar_folder_name,
+                                                                    isplot=True)
             if proposals.shape[0] == 0:
                 continue
             if proposals.shape[0] != 0:
@@ -405,19 +405,6 @@ class KITTICam(Dataset):
                 gt_boxes[:, 2] = gt_boxes[:, 2] * (self.req_img_size[0] / self.initial_image_size[0])
                 gt_boxes[:, 3] = gt_boxes[:, 3] * (self.req_img_size[1] / self.initial_image_size[1])
 
-            # proposals_new = np.zeros_like(proposals)
-            # gt_boxes_new = np.zeros_like(gt_boxes)
-            # if proposals.shape[0] != 0:
-            #     proposals_new[:, 1] = proposals[:, 0] * (self.req_img_size[0] / self.initial_image_size[0])
-            #     proposals_new[:, 0] = proposals[:, 1] * (self.req_img_size[1] / self.initial_image_size[1])
-            #     proposals_new[:, 3] = proposals[:, 2] * (self.req_img_size[0] / self.initial_image_size[0])
-            #     proposals_new[:, 2] = proposals[:, 3] * (self.req_img_size[1] / self.initial_image_size[1])
-
-            # if gt_boxes.shape[0] != 0:
-            #     gt_boxes_new[:, 1] = gt_boxes[:, 0] * (self.req_img_size[0] / self.initial_image_size[0])
-            #     gt_boxes_new[:, 0] = gt_boxes[:, 1] * (self.req_img_size[1] / self.initial_image_size[1])
-            #     gt_boxes_new[:, 3] = gt_boxes[:, 2] * (self.req_img_size[0] / self.initial_image_size[0])
-            #     gt_boxes_new[:, 2] = gt_boxes[:, 3] * (self.req_img_size[1] / self.initial_image_size[1])
 
             label = np.zeros((self.num_classes, ))
             label[0] = 1 if gt_boxes.shape[0] != 0 else 0
@@ -432,6 +419,8 @@ class KITTICam(Dataset):
             ###
             self.preload_gt_boxes.append(gt_boxes)
             self.preload_proposals.append(proposals)
+            self.preload_gt_boxes_3d.append(gt_boxes_3d)
+            self.preload_proposals_3d.append(proposals_3d)
             ###
 
         ####
@@ -451,13 +440,27 @@ class KITTICam(Dataset):
         gt_boxes = self.preload_gt_boxes[index]
         proposals = self.preload_proposals[index]
         gt_class_list = self.preload_gt_class_list[index]
+        gt_boxes_3d = self.preload_gt_boxes_3d[index]
+        proposals_3d = self.preload_proposals_3d[index]
+        
+        ####scan
+        filename = os.path.join(self.lidar_folder_name,
+                                "KITTI",
+                                self.sub_folder,
+                                "velodyne", 
+                                self.filenames_list[index] + ".bin")
 
+        scan = np.fromfile(filename, dtype=np.float32).reshape(-1, 4)
+        ####
         return {'filename': self.filenames_list[index],
                 'image': image,
                 'labels': torch.from_numpy(labels),
                 'gt_boxes': torch.from_numpy(gt_boxes),
                 'proposals': torch.from_numpy(proposals),
-                'gt_class_list': torch.from_numpy(gt_class_list)}
+                'gt_class_list': torch.from_numpy(gt_class_list),
+                'gt_boxes_3d': torch.from_numpy(gt_boxes_3d),
+                'proposals_3d': torch.from_numpy(proposals_3d),
+                'scan': scan}
 
     def get_label(self, filename):
         label = np.zeros((self.num_classes,))

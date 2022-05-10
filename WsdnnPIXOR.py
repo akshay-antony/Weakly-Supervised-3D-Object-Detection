@@ -45,12 +45,12 @@ class WSDDNPIXOR(nn.Module):
                         nn.ReLU(inplace=True))
 
         self.score_fc   = nn.Sequential(
-                            nn.Linear(4096, self.n_classes),
-                            nn.Softmax(dim=1))
+                            nn.Linear(4096, self.n_classes))
+                            #nn.Softmax(dim=1))
 
         self.bbox_fc    = nn.Sequential(
-                            nn.Linear(4096, self.n_classes),
-                            nn.Softmax(dim=0))
+                            nn.Linear(4096, self.n_classes),)
+                            #nn.Softmax(dim=0))
 
     def forward(self, 
                 x, 
@@ -63,8 +63,13 @@ class WSDDNPIXOR(nn.Module):
         spp_output = self.roi_pool(conv_features, [rois], self.roi_size, h/x.shape[2])
         spp_output = spp_output.reshape(spp_output.shape[0], -1)
         classifier_ouput = self.classifier(spp_output)
+        
         class_scores = self.score_fc(classifier_ouput)
+        class_scores = torch.softmax(class_scores, 0)
+
         bbox_scores = self.bbox_fc(classifier_ouput)
+        bbox_scores = torch.softmax(bbox_scores, 1)
+
         cls_prob = class_scores * bbox_scores 
         return cls_prob 
 
