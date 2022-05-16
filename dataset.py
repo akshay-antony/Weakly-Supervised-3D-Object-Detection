@@ -7,7 +7,7 @@ import os
 from dataprocess import load_bbox, filter_boxes
 import ctypes
 from tqdm import tqdm
-from image_2d_box import get_pixel_coordinates, get_pixel_coordinates_and_3d
+from kitti_utils import get_pixel_coordinates, get_pixel_coordinates_and_3d
 from PIL import Image
 from torchvision import transforms
 

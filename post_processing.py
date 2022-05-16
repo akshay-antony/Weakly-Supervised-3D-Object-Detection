@@ -6,7 +6,7 @@ import wandb
 import torchvision
 from torchvision import transforms
 from collections import Counter
-from image_2d_box import get_8points_from_6points
+from kitti_utils import get_8points_from_6points
 
 def iou(box1, box2):
     """
