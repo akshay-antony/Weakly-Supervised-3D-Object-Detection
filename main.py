@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
-from WSDNN_Resnet import  WSDNN_Resnet
+from model import  WSDNN_Resnet
 from dataset import KITTICam
 from torch.utils.data import random_split
 from torch.utils.data import DataLoader
