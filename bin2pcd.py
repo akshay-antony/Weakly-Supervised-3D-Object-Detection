@@ -1,3 +1,4 @@
+# To convert bin lidar files to pcd for KITTI dataset
 
 import numpy as np
 import struct

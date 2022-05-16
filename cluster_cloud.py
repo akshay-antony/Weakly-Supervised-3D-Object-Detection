@@ -1,3 +1,5 @@
+# file to generate density based clusters which will act as proposals
+
 from fileinput import filename
 import numpy as np
 import open3d as o3d
